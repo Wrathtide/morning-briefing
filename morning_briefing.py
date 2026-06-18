@@ -9,7 +9,7 @@ from datetime import datetime
 
 ANTHROPIC_API_KEY = os.environ['ANTHROPIC_API_KEY']
 EMAIL_PASSWORD = os.environ['EMAIL_PASSWORD']
-EMAIL_ADDRESS = 'wrathtide@outlook.com'
+EMAIL_ADDRESS = 'kwasniak.michal@outlook.com'
 
 
 def fetch_url(url, timeout=30):
