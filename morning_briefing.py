@@ -32,7 +32,7 @@ def refresh_access_token():
 
 
 def graph_get(token, path, params=None):
-    url = f'{GRAPH_BASE}{path}'
+    url = path if path.startswith('http') else f'{GRAPH_BASE}{path}'
     if params:
         url += '?' + urllib.parse.urlencode(params)
     req = urllib.request.Request(
@@ -48,7 +48,7 @@ def graph_get(token, path, params=None):
 
 def fetch_emails(token):
     since = (datetime.now(timezone.utc) - timedelta(days=3)).strftime('%Y-%m-%dT%H:%M:%SZ')
-    result = graph_get(token, '/me/messages', {
+    result = graph_get(token, '/me/mailFolders/inbox/messages', {
         '$top': 50,
         '$select': 'subject,from,receivedDateTime,isRead,bodyPreview',
         '$filter': f"receivedDateTime ge {since}",
@@ -74,14 +74,23 @@ def fetch_todo_tasks(token):
     lists_result = graph_get(token, '/me/todo/lists')
     task_lines = []
     for lst in lists_result.get('value', []):
-        tasks_result = graph_get(token, f"/me/todo/lists/{lst['id']}/tasks", {
-            '$filter': "status ne 'completed'",
-            '$top': 30,
-        })
-        for task in tasks_result.get('value', []):
-            due = task.get('dueDateTime')
-            due_str = f" [termin: {due['dateTime'][:10]}]" if due else ''
-            task_lines.append(f"- [{lst['displayName']}] {task['title']}{due_str}")
+        list_name = lst['displayName']
+        list_id = lst['id']
+        # Paginate through all tasks (Graph API max $top=100 per page)
+        url = f"/me/todo/lists/{list_id}/tasks"
+        params = {'$filter': "status ne 'completed'", '$top': 100}
+        while url:
+            result = graph_get(token, url, params if params else None)
+            params = None  # only on first request
+            for task in result.get('value', []):
+                due = task.get('dueDateTime')
+                due_str = f" [termin: {due['dateTime'][:10]}]" if due else ''
+                body = (task.get('body') or {}).get('content', '') or ''
+                body_preview = body[:100].strip() if body.strip() else ''
+                note = f" | {body_preview}" if body_preview else ''
+                task_lines.append(f"- [{list_name}] {task['title']}{due_str}{note}")
+            next_link = result.get('@odata.nextLink', '')
+            url = next_link if next_link else None
     return '\n'.join(task_lines) if task_lines else 'Brak aktywnych zadan.'
 
 
