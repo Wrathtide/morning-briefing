@@ -17,8 +17,9 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Send morning briefing
+      - name: Generate and send morning briefing
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
+          MS_CLIENT_ID: ${{ secrets.MS_CLIENT_ID }}
+          MS_REFRESH_TOKEN: ${{ secrets.MS_REFRESH_TOKEN }}
         run: python morning_briefing.py
