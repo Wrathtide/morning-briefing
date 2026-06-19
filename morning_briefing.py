@@ -75,22 +75,19 @@ def fetch_todo_tasks(token):
     task_lines = []
     for lst in lists_result.get('value', []):
         list_name = lst['displayName']
+        if list_name.strip().lower() != 'do zrobienia':
+            continue
         list_id = lst['id']
-        # Paginate through all tasks (Graph API max $top=100 per page)
         url = f"/me/todo/lists/{list_id}/tasks"
         params = {'$filter': "status ne 'completed'", '$top': 100}
         while url:
             result = graph_get(token, url, params if params else None)
-            params = None  # only on first request
+            params = None
             for task in result.get('value', []):
                 due = task.get('dueDateTime')
                 due_str = f" [termin: {due['dateTime'][:10]}]" if due else ''
-                body = (task.get('body') or {}).get('content', '') or ''
-                body_preview = body[:100].strip() if body.strip() else ''
-                note = f" | {body_preview}" if body_preview else ''
-                task_lines.append(f"- [{list_name}] {task['title']}{due_str}{note}")
-            next_link = result.get('@odata.nextLink', '')
-            url = next_link if next_link else None
+                task_lines.append(f"- {task['title']}{due_str}")
+            url = result.get('@odata.nextLink') or None
     return '\n'.join(task_lines) if task_lines else 'Brak aktywnych zadan.'
 
 
@@ -493,6 +490,26 @@ def fmt_imgw(src):
     )
 
 
+# ── Ruch drogowy (OSRM — bez klucza API, czas bez korkow) ────────────────────
+
+def fetch_traffic_osrm(lat1, lon1, lat2, lon2):
+    """Szacowany czas jazdy z OSRM (Open Source Routing Machine, bez real-time traffic)."""
+    url = (
+        f"https://router.project-osrm.org/route/v1/driving/"
+        f"{lon1},{lat1};{lon2},{lat2}?overview=false"
+    )
+    data = fetch_json(url, extra_headers={'User-Agent': 'morning-briefing/1.0'})
+    if not data or data.get('code') != 'Ok':
+        return None
+    try:
+        route = data['routes'][0]
+        duration_min = round(route['duration'] / 60)
+        distance_km = round(route['distance'] / 1000, 1)
+        return {'duration_min': duration_min, 'distance_km': distance_km}
+    except Exception:
+        return None
+
+
 # ── Newsy ─────────────────────────────────────────────────────────────────────
 
 def fetch_news_rss(query, lang='pl', country='PL'):
@@ -510,7 +527,7 @@ def fetch_article(article_url):
 def call_claude(prompt):
     data = json.dumps({
         'model': 'claude-sonnet-4-6',
-        'max_tokens': 4096,
+        'max_tokens': 8192,
         'messages': [{'role': 'user', 'content': prompt}],
     }).encode('utf-8')
     req = urllib.request.Request(
@@ -580,6 +597,10 @@ def main():
     sunrise = bb_wttr.get('sunrise', '?') if bb_wttr else '?'
     sunset  = bb_wttr.get('sunset',  '?') if bb_wttr else '?'
 
+    print('Pobieram ruch drogowy...')
+    traffic_kety_bb = fetch_traffic_osrm(KETY_LAT, KETY_LON, BB_LAT, BB_LON)
+    traffic_bb_kety = fetch_traffic_osrm(BB_LAT, BB_LON, KETY_LAT, KETY_LON)
+
     print('Pobieram newsy i gry...')
     news_world  = fetch_news_rss('world news today', lang='en', country='US')
     news_poland = fetch_news_rss('Polska wiadomosci dzis')
@@ -637,7 +658,15 @@ STRUKTURA (w tej kolejnosci):
    c) Jesli CALENDAR_EVENTS == "Brak wydarzen": jeden wiersz "Wolny dzień — brak spotkań"
    Cala sekcja: jezeli jest DZIEN_WOLNY to dodaj subtelny zolty ramki do calej sekcji (border-left: 4px solid #fbc02d)
 
-4. SKRZYNKA ODBIORCZA (naglowek tlo #fff8e1, ikona 📬):
+4. DOJAZD DO PRACY (naglowek tlo #e8eaf6, ikona 🚗 "Dojazd Kęty → Bielsko-Biała"):
+   Trasa: Kęty → Bielsko-Biała (rano, do pracy) i powrót (wieczorem)
+   Czas bazowy bez korkow z OSRM — informuj ze to estymacja bez real-time traffic.
+   Format: 2 wiersze:
+   - 🚗 Rano (Kęty → BB): ok. X min | Y km
+   - 🏠 Wieczorem (BB → Kęty): ok. X min | Y km
+   Jesli brak danych: "Brak danych o trasie"
+
+5. SKRZYNKA ODBIORCZA (naglowek tlo #fff8e1, ikona 📬):
    Przeanalizuj WSZYSTKIE emaile z sekcji SKRZYNKA i wyswietl TYLKO te, ktore spelniaja co najmniej jeden z kryteriow:
    a) Wymagaja REAKCJI uzytkownika w ciagu 3 dni (odpowiedz, potwierdzenie, platnosc, decyzja, termin, spotkanie do zaakceptowania)
    b) Alert bezpieczenstwa (weryfikacja logowania, zmiana hasla, podejrzana aktywnosc, phishing warning, 2FA, konto zablokowane)
@@ -652,13 +681,13 @@ STRUKTURA (w tej kolejnosci):
    Jesli ZADNA wiadomosc nie kwalifikuje sie: jeden wiersz szary "Brak pilnych wiadomosci — skrzynka spokojna ✅"
    NIE pokazuj zwyklych newsletterow, reklam, powiadomien serwisowych, potwierdzen zamowien bez akcji.
 
-4. ZADANIA TO DO (naglowek tlo #f3e5f5):
+6. ZADANIA TO DO (naglowek tlo #f3e5f5):
    Lista, terminy pogrubione czerwono
 
-5. WIADOMOSCI (naglowek tlo #e8f5e9):
+7. WIADOMOSCI (naglowek tlo #e8f5e9):
    Podsekcje: Swiat | Polska | Lokalne. Kazdy temat: tytul + 2 zdania.
 
-6. GAMING I DARMOWE GRY (naglowek tlo #fce4ec):
+8. GAMING I DARMOWE GRY (naglowek tlo #fce4ec):
    Darmowe gry: ramka 2px solid #4caf50, pelna informacja (co, gdzie, do kiedy)
    Pozostale gaming newsy: lista
 
@@ -686,7 +715,11 @@ SPECIAL_DAYS:
 CALENDAR_EVENTS:
 {calendar_events}
 
-== SKRZYNKA (ostatnie 3 dni) ==
+== DOJAZD (OSRM, bez real-time traffic) ==
+Kety -> Bielsko-Biala: {f"{traffic_kety_bb['duration_min']} min | {traffic_kety_bb['distance_km']} km" if traffic_kety_bb else 'BLAD'}
+Bielsko-Biala -> Kety: {f"{traffic_bb_kety['duration_min']} min | {traffic_bb_kety['distance_km']} km" if traffic_bb_kety else 'BLAD'}
+
+== SKRZYNKA (ostatnie 3 dni, tylko inbox) ==
 {emails}
 
 == ZADANIA TO DO ==
