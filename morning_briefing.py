@@ -200,44 +200,66 @@ def main():
     epic_games = fetch_article('https://store.epicgames.com/en-US/free-games')
     gog_free = fetch_article('https://www.gog.com/en/games?features=free')
 
-    prompt = f"""Jestes asystentem Michala tworzacym jego poranny raport. Dzis: {today}.
+    prompt = f"""Jestes asystentem Michala tworzacym jego poranny raport emailowy. Dzis: {today}.
 
-Przygotuj kompletna strone HTML. Pisz po polsku. Sekcje w tej KOLEJNOSCI:
+KRYTYCZNE ZASADY TECHNICZNE — email bedzie wyswietlany w Outlook.com:
+- Uzyj WYLACZNIE tabel HTML do layoutu (NIE div+flexbox, NIE CSS grid)
+- Wszystkie style jako INLINE (style="...") — zadnych <style> w <head>
+- Zadnego JavaScript
+- Zadnych zewnetrznych fontow, animacji, pseudoelementow CSS
+- Szerokosci jako liczby bez jednostki w atrybucie width (np. width="600")
+- Kolory jako hex (#ffffff), nie rgba()
+- Pisz po polsku
 
-1. POGODA (pierwsza i najwazniejsza sekcja)
-2. SKRZYNKA ODBIORCZA
-3. ZADANIA TO DO
-4. WIADOMOSCI (swiatowe, polskie, lokalne w jednej sekcji z podsekcjami)
-5. GAMING I DARMOWE GRY
+STRUKTURA (w tej kolejnosci):
+
+1. NAGLOWEK: tabela szerokosc 600, tlo #1a73e8, bialy tekst, emoji slonce, "Poranny Raport", data
+
+2. SEKCJA POGODA (pierwsza merytoryczna sekcja):
+   Dwie tabele pogody jedna pod druga (na emailu nie ma mobile breakpointow):
+   --- Bielsko-Biala (praca, 07:00-18:00) ---
+   Naglowek sekcji: tlo #e8f4fd, tekst "Bielsko-Biala — praca"
+   Min/max dnia, wschod/zachod slonca jako jeden wiersz
+   Tabela godzin: kolumny Godzina | Temp | Odczuwalna | Opis | Opady | Wiatr
+   Wiersz naglowkowy: tlo #2196F3, bialy tekst
+   Wiersze danych: naprzemiennie #f8f9fa i #ffffff
+   Jesli opady > 0.5mm: komorka Opady tlo #fff3cd
+   Jesli opady > 3mm lub wiatr > 30km/h: caly wiersz tlo #ffe0e0
+
+   --- Kety (dom, 16:00-23:00) ---
+   Naglowek sekcji: tlo #e8fde8, tekst "Kety — dom"
+   Tak samo jak Bielsko
+
+   Na koncu sekcji: jeden wiersz podsumowania (brac parasol? kurtke?)
+
+3. SKRZYNKA ODBIORCZA:
+   Naglowek sekcji: tlo #fff8e1, "Skrzynka odbiorcza"
+   Kazda wiadomosc: tabela z obramowaniem, NOWE pogrubione i z ikona, temat jako naglowek
+   Jesli wiadomosc wyglada na pilna/deadline: obramowanie 2px solid #e53935
+
+4. ZADANIA TO DO:
+   Naglowek sekcji: tlo #f3e5f5, "Zadania"
+   Lista zadan, terminy pogrubione na czerwono
+
+5. WIADOMOSCI:
+   Naglowek: tlo #e8f5e9, "Wiadomosci"
+   Podsekcje: Swiat | Polska | Lokalne (krotkie naglowki)
+   Kazdy temat: pogrubiony tytul + 2 zdania
+
+6. GAMING I DARMOWE GRY:
+   Naglowek: tlo #fce4ec, "Gaming"
+   Darmowe gry: wyroznic ramka #4caf50, pelna informacja
+   Pozostale newsy: lista
 
 ---
-ZASADY SEKCJI POGODA:
-Pokaz dwie karty obok siebie (lub jedna pod druga na mobile):
-- Karta "Bielsko-Biala - praca (07:00-18:00)": tabela godzin z temperatura, opisem, opadami, wiatrem
-- Karta "Kety - dom (16:00-23:00)": tabela godzin z temperatura, opisem, opadami, wiatrem
-Na gorze kazdej karty: min/max dnia, wschod/zachod slonca.
-Jesli sa opady > 0 lub duzy wiatr (>30km/h) — zaznacz czerwonym/pomaranczowym kolorem.
-Jedno zdanie komentarza: czy brac parasol/kurtke.
+DANE:
 
-ZASADY POZOSTALYCH SEKCJI:
-- Skrzynka: NOWE wiadomosci pogrubione, zaznacz pilne/deadline czerwona ramka
-- Zadania To Do: pogrupowane po liscie, terminy pogrubione
-- Wiadomosci swiatowe: 3-4 tematy, 2 zdania kazdy
-- Wiadomosci Polska: 3-4 tematy, 2 zdania kazdy
-- Wiadomosci lokalne: wszystko co jest, krotko
-- Darmowe gry: PELNA INFO — tytul, opis, platforma, do kiedy bezplatna; wyroznic wizualnie
-- Gaming news: tytul + jedno zdanie
-
----
-DANE POGODOWE:
-
-BIELSKO-BIALA (07:00-18:00):
+POGODA BIELSKO-BIALA (07:00-18:00):
 {weather_bb}
 
-KETY (16:00-23:00):
+POGODA KETY (16:00-23:00):
 {weather_kety}
 
----
 SKRZYNKA (ostatnie 3 dni):
 {emails}
 
@@ -263,17 +285,9 @@ GOG DARMOWE:
 {gog_free}
 
 ---
-WYMAGANIA HTML:
-- Zacznij od <!DOCTYPE html>, skoncz na </html>
-- Naglowek strony: "Poranny raport - {today}"
-- font-family: system-ui, -apple-system, sans-serif
-- Tlo strony: #f0f2f5
-- max-width: 680px, margin: 0 auto, padding: 16px
-- Karty sekcji: background white, border-radius: 12px, box-shadow: 0 2px 8px rgba(0,0,0,0.08), padding: 20px, margin-bottom: 16px
-- Naglowki sekcji: emoji + nazwa, font-size: 18px, font-weight: 700, margin-bottom: 12px, color: #1a1a2e
-- Tabela pogody: width:100%, border-collapse:collapse, kazda komorka padding:6px 8px, naprzemienne tlo wierszy
-- Responsive: na mobile (max-width:480px) karty pogody jedna pod druga
-- Kolory alertow: opady>0.5mm lub wiatr>30km/h -> komorka background #fff3cd; opady>3mm -> #ffe0e0
+Zacznij od <!DOCTYPE html><html><body> i skoncz </body></html>.
+Caly email to jedna zewnetrzna tabela width="600" align="center" z bialym tlem i szarym obramowaniem.
+Kazda sekcja to oddzielna tabela wewnatrz tej zewnetrznej, z marginesem 16px.
 """
 
     print('Generuje raport przez Claude Sonnet...')
