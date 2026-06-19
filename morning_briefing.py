@@ -49,7 +49,7 @@ def graph_get(token, path, params=None):
 def fetch_emails(token):
     since = (datetime.now(timezone.utc) - timedelta(days=3)).strftime('%Y-%m-%dT%H:%M:%SZ')
     result = graph_get(token, '/me/messages', {
-        '$top': 20,
+        '$top': 50,
         '$select': 'subject,from,receivedDateTime,isRead,bodyPreview',
         '$filter': f"receivedDateTime ge {since}",
         '$orderby': 'receivedDateTime desc',
@@ -65,7 +65,7 @@ def fetch_emails(token):
             f"{status}Od: {sender}\n"
             f"Temat: {m.get('subject', '(brak tematu)')}\n"
             f"Data: {m.get('receivedDateTime', '')[:10]}\n"
-            f"Podglad: {m.get('bodyPreview', '')[:200]}\n"
+            f"Podglad: {m.get('bodyPreview', '')[:400]}\n"
         )
     return '\n'.join(lines)
 
@@ -628,9 +628,20 @@ STRUKTURA (w tej kolejnosci):
    c) Jesli CALENDAR_EVENTS == "Brak wydarzen": jeden wiersz "Wolny dzień — brak spotkań"
    Cala sekcja: jezeli jest DZIEN_WOLNY to dodaj subtelny zolty ramki do calej sekcji (border-left: 4px solid #fbc02d)
 
-4. SKRZYNKA ODBIORCZA (naglowek tlo #fff8e1):
-   Kazda wiadomosc: obramowanie, [NOWE] pogrubione, temat jako naglowek h4
-   Pilne/deadline: obramowanie 2px solid #e53935
+4. SKRZYNKA ODBIORCZA (naglowek tlo #fff8e1, ikona 📬):
+   Przeanalizuj WSZYSTKIE emaile z sekcji SKRZYNKA i wyswietl TYLKO te, ktore spelniaja co najmniej jeden z kryteriow:
+   a) Wymagaja REAKCJI uzytkownika w ciagu 3 dni (odpowiedz, potwierdzenie, platnosc, decyzja, termin, spotkanie do zaakceptowania)
+   b) Alert bezpieczenstwa (weryfikacja logowania, zmiana hasla, podejrzana aktywnosc, phishing warning, 2FA, konto zablokowane)
+
+   Dla kazdego zakwalifikowanego emaila:
+   - Temat pogrubiony jako naglowek, [NOWE] jesli nieprzeczytany
+   - Nadawca + data (krotko)
+   - 1 zdanie: DLACZEGO wymaga akcji / jaki rodzaj alertu
+   - Obramowanie 2px solid #e53935 jesli deadline <= 2 dni lub alert bezpieczenstwa
+   - Obramowanie 1px solid #fbc02d jesli deadline 2-3 dni
+
+   Jesli ZADNA wiadomosc nie kwalifikuje sie: jeden wiersz szary "Brak pilnych wiadomosci — skrzynka spokojna ✅"
+   NIE pokazuj zwyklych newsletterow, reklam, powiadomien serwisowych, potwierdzen zamowien bez akcji.
 
 4. ZADANIA TO DO (naglowek tlo #f3e5f5):
    Lista, terminy pogrubione czerwono
