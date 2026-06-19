@@ -581,7 +581,7 @@ def call_claude(prompt):
             'content-type': 'application/json',
         },
     )
-    with urllib.request.urlopen(req, timeout=120) as r:
+    with urllib.request.urlopen(req, timeout=300) as r:
         return json.loads(r.read())['content'][0]['text']
 
 
