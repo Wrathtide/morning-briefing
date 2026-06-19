@@ -2,12 +2,17 @@ import os
 import json
 import urllib.request
 import urllib.parse
+import zoneinfo
 from datetime import datetime, timedelta, timezone
 
 ANTHROPIC_API_KEY = os.environ['ANTHROPIC_API_KEY']
 MS_CLIENT_ID = os.environ['MS_CLIENT_ID']
 MS_REFRESH_TOKEN = os.environ['MS_REFRESH_TOKEN']
 GRAPH_BASE = 'https://graph.microsoft.com/v1.0'
+WARSAW_TZ = zoneinfo.ZoneInfo('Europe/Warsaw')
+
+BB_LAT, BB_LON = 49.8224, 19.0584
+KETY_LAT, KETY_LON = 49.8825, 19.2216
 
 
 def refresh_access_token():
@@ -80,8 +85,11 @@ def fetch_todo_tasks(token):
     return '\n'.join(task_lines) if task_lines else 'Brak aktywnych zadan.'
 
 
-def fetch_url(url, timeout=30):
-    req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+def fetch_url(url, timeout=30, extra_headers=None):
+    headers = {'User-Agent': 'Mozilla/5.0'}
+    if extra_headers:
+        headers.update(extra_headers)
+    req = urllib.request.Request(url, headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
             return r.read().decode('utf-8', errors='replace')
@@ -89,41 +97,240 @@ def fetch_url(url, timeout=30):
         return f'[Blad: {e}]'
 
 
-def fetch_weather_json(city):
-    raw = fetch_url(f'https://wttr.in/{urllib.parse.quote(city)}?format=j1')
+def fetch_json(url, timeout=30, extra_headers=None):
+    raw = fetch_url(url, timeout=timeout, extra_headers=extra_headers)
     try:
         return json.loads(raw)
     except Exception:
         return None
 
 
-def parse_weather(data, hour_times):
-    """Wyciaga dane pogodowe dla wybranych godzin (np. [600, 900, 1200, 1500, 1800])."""
+# ── wttr.in ───────────────────────────────────────────────────────────────────
+
+def fetch_wttr(city, hour_start, hour_end):
+    data = fetch_json(f'https://wttr.in/{urllib.parse.quote(city)}?format=j1')
     if not data:
-        return '[Brak danych pogodowych]'
+        return None
     try:
         today = data['weather'][0]
         astro = today.get('astronomy', [{}])[0]
-        lines = [
-            f"Min: {today['mintempC']}C / Max: {today['maxtempC']}C",
-            f"Wschod slonca: {astro.get('sunrise','?')} | Zachod: {astro.get('sunset','?')}",
-            '',
-        ]
+        temps, feels, precip_mm_list, precip_prob_list, winds, rain_hours = [], [], [], [], [], []
         for h in today['hourly']:
             t = int(h['time'])
-            if t in hour_times:
-                hour_h = t // 100
-                desc = h['weatherDesc'][0]['value'] if h.get('weatherDesc') else ''
-                chance_rain = h.get('chanceofrain', '0')
-                lines.append(
-                    f"{hour_h:02d}:00 | {h['tempC']}C (odczuwalnie {h['FeelsLikeC']}C) | "
-                    f"{desc} | opady: {h['precipMM']}mm ({chance_rain}% szans) | "
-                    f"wiatr: {h['windspeedKmph']} km/h {h.get('winddir16Point','')}"
-                )
-        return '\n'.join(lines)
-    except Exception as e:
-        return f'[Blad parsowania pogody: {e}]'
+            hour_h = t // 100
+            if hour_start <= hour_h <= hour_end:
+                temps.append(int(h['tempC']))
+                feels.append(int(h['FeelsLikeC']))
+                mm = float(h['precipMM'])
+                prob = int(h.get('chanceofrain', 0))
+                precip_mm_list.append(mm)
+                precip_prob_list.append(prob)
+                winds.append(int(h['windspeedKmph']))
+                if prob >= 30 or mm >= 0.3:
+                    rain_hours.append(f"{hour_h:02d}:00")
+        if not temps:
+            return None
+        return {
+            'source': 'wttr.in',
+            'min_temp': min(temps), 'max_temp': max(temps),
+            'min_feels': min(feels), 'max_feels': max(feels),
+            'max_precip_mm': max(precip_mm_list),
+            'total_precip_mm': round(sum(precip_mm_list), 1),
+            'max_precip_prob': max(precip_prob_list),
+            'max_wind': max(winds),
+            'rain_hours': rain_hours,
+            'sunrise': astro.get('sunrise', '?'),
+            'sunset': astro.get('sunset', '?'),
+        }
+    except Exception:
+        return None
 
+
+# ── Open-Meteo ────────────────────────────────────────────────────────────────
+
+def fetch_openmeteo(lat, lon, hour_start, hour_end):
+    url = (
+        f"https://api.open-meteo.com/v1/forecast"
+        f"?latitude={lat}&longitude={lon}"
+        f"&hourly=temperature_2m,apparent_temperature,precipitation_probability,"
+        f"precipitation,windspeed_10m"
+        f"&timezone=Europe%2FWarsaw&forecast_days=1"
+    )
+    data = fetch_json(url)
+    if not data:
+        return None
+    try:
+        hourly = data['hourly']
+        times = hourly['time']
+        temps, feels, precip_mm_list, precip_prob_list, winds, rain_hours = [], [], [], [], [], []
+        for i, t in enumerate(times):
+            hour = int(t[11:13])
+            if hour_start <= hour <= hour_end:
+                temps.append(round(hourly['temperature_2m'][i]))
+                feels.append(round(hourly['apparent_temperature'][i]))
+                mm = hourly['precipitation'][i]
+                prob = hourly['precipitation_probability'][i]
+                winds.append(round(hourly['windspeed_10m'][i]))
+                precip_mm_list.append(mm)
+                precip_prob_list.append(prob)
+                if prob >= 30 or mm >= 0.3:
+                    rain_hours.append(f"{hour:02d}:00")
+        if not temps:
+            return None
+        return {
+            'source': 'open-meteo.com',
+            'min_temp': min(temps), 'max_temp': max(temps),
+            'min_feels': min(feels), 'max_feels': max(feels),
+            'max_precip_mm': max(precip_mm_list),
+            'total_precip_mm': round(sum(precip_mm_list), 1),
+            'max_precip_prob': max(precip_prob_list),
+            'max_wind': max(winds),
+            'rain_hours': rain_hours,
+        }
+    except Exception:
+        return None
+
+
+# ── yr.no ─────────────────────────────────────────────────────────────────────
+
+def fetch_yr(lat, lon, hour_start, hour_end):
+    url = f"https://api.met.no/weatherapi/locationforecast/2.0/compact?lat={lat}&lon={lon}"
+    data = fetch_json(url, extra_headers={'User-Agent': 'morning-briefing/1.0 wrathtide@outlook.com'})
+    if not data:
+        return None
+    try:
+        today_local = datetime.now(WARSAW_TZ).date()
+        temps, winds, precip_mm_list, precip_prob_list, rain_hours = [], [], [], [], []
+        for entry in data['properties']['timeseries']:
+            t_utc = datetime.strptime(entry['time'], '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=timezone.utc)
+            t_local = t_utc.astimezone(WARSAW_TZ)
+            if t_local.date() != today_local:
+                continue
+            h = t_local.hour
+            if not (hour_start <= h <= hour_end):
+                continue
+            details = entry['data']['instant']['details']
+            temps.append(round(details.get('air_temperature', 0)))
+            winds.append(round(details.get('wind_speed', 0) * 3.6))
+            next1 = entry['data'].get('next_1_hours', {}).get('details', {})
+            mm = next1.get('precipitation_amount', 0) or 0
+            prob = next1.get('probability_of_precipitation', 0) or 0
+            precip_mm_list.append(mm)
+            precip_prob_list.append(prob)
+            if mm >= 0.3 or prob >= 30:
+                rain_hours.append(f"{h:02d}:00")
+        if not temps:
+            return None
+        return {
+            'source': 'yr.no',
+            'min_temp': min(temps), 'max_temp': max(temps),
+            'max_precip_mm': max(precip_mm_list),
+            'total_precip_mm': round(sum(precip_mm_list), 1),
+            'max_precip_prob': max(precip_prob_list),
+            'max_wind': max(winds),
+            'rain_hours': rain_hours,
+        }
+    except Exception:
+        return None
+
+
+# ── IMGW ──────────────────────────────────────────────────────────────────────
+
+def fetch_imgw_synop(station_keyword):
+    data = fetch_json('https://danepubliczne.imgw.pl/api/data/synop')
+    if not isinstance(data, list):
+        return None
+    try:
+        station = next(
+            (s for s in data if station_keyword.upper() in s.get('stacja', '').upper()),
+            None
+        )
+        if not station:
+            return None
+        wind_ms = float(station.get('predkosc_wiatru') or 0)
+        return {
+            'source': 'IMGW',
+            'station': station.get('stacja', '?'),
+            'time': f"{station.get('data_pomiaru', '')} {station.get('godzina_pomiaru', '')}:00",
+            'temp': station.get('temperatura', '?'),
+            'wind_kmh': round(wind_ms * 3.6, 1),
+            'precip_1h': station.get('suma_opadu', '?'),
+            'pressure': station.get('cisnienie', '?'),
+            'humidity': station.get('wilgotnosc_wzgledna', '?'),
+        }
+    except Exception:
+        return None
+
+
+def fetch_imgw_warnings():
+    data = fetch_json('https://danepubliczne.imgw.pl/api/data/warnings')
+    if not data:
+        return ''
+    try:
+        relevant = ['śląskie', 'slaskie', 'małopolskie', 'malopolskie',
+                    'slask', 'malopolska', 'silesia']
+        items = data if isinstance(data, list) else []
+        warnings = []
+        for w in items:
+            region = str(w.get('obszar', '') or w.get('region', '') or '').lower()
+            if any(v in region for v in relevant):
+                level = w.get('stopien') or w.get('level', '?')
+                phenomenon = w.get('zjawisko') or w.get('phenomenon', '?')
+                time_range = (w.get('czas_od_do')
+                              or f"{w.get('od', '')} - {w.get('do', '')}")
+                warnings.append(f"STOPIEN {level}: {phenomenon} ({time_range})")
+        return '\n'.join(warnings)
+    except Exception:
+        return ''
+
+
+# ── Porownanie zrodel ─────────────────────────────────────────────────────────
+
+def compare_sources(sources):
+    valid = [s for s in sources if s and s.get('max_temp') is not None]
+    if len(valid) < 2:
+        return ''
+    warnings = []
+    temp_pairs = [(s['source'], s['max_temp']) for s in valid]
+    temp_vals = [v for _, v in temp_pairs]
+    if max(temp_vals) - min(temp_vals) >= 5:
+        desc = ', '.join(f"{src}: {t}°C" for src, t in temp_pairs)
+        warnings.append(f"Temperatura maks: roznica {max(temp_vals)-min(temp_vals)}°C ({desc})")
+    prec_pairs = [(s['source'], s['max_precip_mm']) for s in valid
+                  if s.get('max_precip_mm') is not None]
+    if prec_pairs:
+        p_vals = [v for _, v in prec_pairs]
+        if max(p_vals) - min(p_vals) >= 3:
+            desc = ', '.join(f"{src}: {p}mm" for src, p in prec_pairs)
+            warnings.append(f"Opady maks: roznica {max(p_vals)-min(p_vals):.1f}mm ({desc})")
+    return '\n'.join(warnings)
+
+
+def fmt_source(src):
+    if not src:
+        return 'BLAD - brak danych'
+    rain = ', '.join(src['rain_hours']) if src.get('rain_hours') else 'brak'
+    return (
+        f"temp {src.get('min_temp','?')}-{src.get('max_temp','?')}°C "
+        f"(odcz. {src.get('min_feels','?')}-{src.get('max_feels','?')}°C), "
+        f"opady max {src.get('max_precip_mm', 0):.1f}mm "
+        f"(szansa {src.get('max_precip_prob', 0):.0f}%), "
+        f"wiatr max {src.get('max_wind', 0)}km/h, "
+        f"godz. z ryzykiem: {rain}"
+    )
+
+
+def fmt_imgw(src):
+    if not src:
+        return 'BLAD - brak danych ze stacji IMGW'
+    return (
+        f"Stacja {src['station']} | Pomiar: {src['time']} | "
+        f"Temp: {src['temp']}°C | Wiatr: {src['wind_kmh']}km/h | "
+        f"Opad 1h: {src['precip_1h']}mm | Cisnienie: {src['pressure']}hPa"
+    )
+
+
+# ── Newsy ─────────────────────────────────────────────────────────────────────
 
 def fetch_news_rss(query, lang='pl', country='PL'):
     encoded = urllib.parse.quote(query)
@@ -134,6 +341,8 @@ def fetch_news_rss(query, lang='pl', country='PL'):
 def fetch_article(article_url):
     return fetch_url(f'https://r.jina.ai/{article_url}', timeout=45)[:3000]
 
+
+# ── Claude ────────────────────────────────────────────────────────────────────
 
 def call_claude(prompt):
     data = json.dumps({
@@ -153,6 +362,8 @@ def call_claude(prompt):
     with urllib.request.urlopen(req, timeout=120) as r:
         return json.loads(r.read())['content'][0]['text']
 
+
+# ── Email ─────────────────────────────────────────────────────────────────────
 
 def send_email_graph(token, subject, html_body):
     message = {
@@ -175,30 +386,41 @@ def send_email_graph(token, subject, html_body):
         pass  # 202 Accepted
 
 
+# ── Main ──────────────────────────────────────────────────────────────────────
+
 def main():
-    today = datetime.now().strftime('%A, %d.%m.%Y')
+    today = datetime.now(WARSAW_TZ).strftime('%A, %d.%m.%Y')
 
     print('Odswiezam token Microsoft...')
     access_token = refresh_access_token()
 
-    print('Pobieram dane...')
+    print('Pobieram email i zadania...')
     emails = fetch_emails(access_token)
     todo = fetch_todo_tasks(access_token)
 
-    # Pogoda — godzinowa
-    # Bielsko-Biala: godziny pracy/dnia 07-18 -> wttr.in hourly: 600 900 1200 1500 1800
-    # Kety: popoludnie/wieczor 16-23 -> wttr.in hourly: 1500 1800 2100
-    weather_bb_json = fetch_weather_json('Bielsko-Biala,Poland')
-    weather_kety_json = fetch_weather_json('Kety,Poland')
-    weather_bb = parse_weather(weather_bb_json, [600, 900, 1200, 1500, 1800])
-    weather_kety = parse_weather(weather_kety_json, [1500, 1800, 2100])
+    print('Pobieram pogode (4 zrodla)...')
+    bb_wttr      = fetch_wttr('Bielsko-Biala,Poland', 6, 18)
+    bb_openmeteo = fetch_openmeteo(BB_LAT, BB_LON, 7, 18)
+    bb_yr        = fetch_yr(BB_LAT, BB_LON, 7, 18)
+    bb_imgw      = fetch_imgw_synop('BIELSKO')
+    bb_warnings  = compare_sources([bb_wttr, bb_openmeteo, bb_yr])
+    imgw_alerts  = fetch_imgw_warnings()
 
-    news_world = fetch_news_rss('world news today', lang='en', country='US')
+    kety_wttr      = fetch_wttr('Kety,Poland', 15, 23)
+    kety_openmeteo = fetch_openmeteo(KETY_LAT, KETY_LON, 16, 23)
+    kety_yr        = fetch_yr(KETY_LAT, KETY_LON, 16, 23)
+    kety_warnings  = compare_sources([kety_wttr, kety_openmeteo, kety_yr])
+
+    sunrise = bb_wttr.get('sunrise', '?') if bb_wttr else '?'
+    sunset  = bb_wttr.get('sunset',  '?') if bb_wttr else '?'
+
+    print('Pobieram newsy i gry...')
+    news_world  = fetch_news_rss('world news today', lang='en', country='US')
     news_poland = fetch_news_rss('Polska wiadomosci dzis')
-    news_local = fetch_news_rss('Kety Bielsko-Biala')
+    news_local  = fetch_news_rss('Kety Bielsko-Biala')
     news_gaming = fetch_news_rss('free games Epic GOG Steam Amazon Prime Gaming', lang='en', country='US')
-    epic_games = fetch_article('https://store.epicgames.com/en-US/free-games')
-    gog_free = fetch_article('https://www.gog.com/en/games?features=free')
+    epic_games  = fetch_article('https://store.epicgames.com/en-US/free-games')
+    gog_free    = fetch_article('https://www.gog.com/en/games?features=free')
 
     prompt = f"""Jestes asystentem Michala tworzacym jego poranny raport emailowy. Dzis: {today}.
 
@@ -213,69 +435,77 @@ KRYTYCZNE ZASADY TECHNICZNE — email bedzie wyswietlany w Outlook.com:
 
 STRUKTURA (w tej kolejnosci):
 
-1. NAGLOWEK: tabela szerokosc 600, tlo #1a73e8, bialy tekst, emoji slonce, "Poranny Raport", data
+1. NAGLOWEK: tabela width="600", tlo #1a73e8, bialy tekst, emoji slonce, "Poranny Raport", data i dzien tygodnia
 
-2. SEKCJA POGODA (pierwsza merytoryczna sekcja):
-   Dwie tabele pogody jedna pod druga (na emailu nie ma mobile breakpointow):
-   --- Bielsko-Biala (praca, 07:00-18:00) ---
-   Naglowek sekcji: tlo #e8f4fd, tekst "Bielsko-Biala — praca"
-   Min/max dnia, wschod/zachod slonca jako jeden wiersz
-   Tabela godzin: kolumny Godzina | Temp | Odczuwalna | Opis | Opady | Wiatr
-   Wiersz naglowkowy: tlo #2196F3, bialy tekst
-   Wiersze danych: naprzemiennie #f8f9fa i #ffffff
-   Jesli opady > 0.5mm: komorka Opady tlo #fff3cd
-   Jesli opady > 3mm lub wiatr > 30km/h: caly wiersz tlo #ffe0e0
+2. SEKCJA POGODA:
+   NIE rob tabelki godzin. Krotkie podsumowanie narracyjne (max 2-3 zdania na miasto).
+   Skupiaj sie WYLACZNIE na: ryzyku opadow (kiedy, ile), zakresie temperatury (czy zimno/cieplo/upal/mroz), silnym wietrze (>30km/h).
+   Jesli min_temp < 0: wiersz ostrzezenia tlo #ffe0e0 "Uwaga: mróz!"
 
-   --- Kety (dom, 16:00-23:00) ---
-   Naglowek sekcji: tlo #e8fde8, tekst "Kety — dom"
-   Tak samo jak Bielsko
+   a) Naglowek "Bielsko-Biala — praca (07:00-18:00)", tlo #e8f4fd
+      Wschod slonca: {sunrise} | Zachod: {sunset}
+      Narracyjne 2-3 zdania z wnioskow ze wszystkich zrodel
+      Jesli IMGW_ALERTS niepuste: wiersz tlo #ffebee, ikona ⚠️ + tresc alertu
+      Jesli BB_WARNINGS niepuste: wiersz tlo #fff3cd, ikona ⚠️ + tresc
 
-   Na koncu sekcji: jeden wiersz podsumowania (brac parasol? kurtke?)
+   b) Naglowek "Kety — dom (16:00-23:00)", tlo #e8fde8
+      Narracyjne 2-3 zdania
+      Jesli KETY_WARNINGS niepuste: wiersz tlo #fff3cd, ikona ⚠️ + tresc
 
-3. SKRZYNKA ODBIORCZA:
-   Naglowek sekcji: tlo #fff8e1, "Skrzynka odbiorcza"
-   Kazda wiadomosc: tabela z obramowaniem, NOWE pogrubione i z ikona, temat jako naglowek
-   Jesli wiadomosc wyglada na pilna/deadline: obramowanie 2px solid #e53935
+   c) PODSUMOWANIE (osobny wiersz, tlo #eeeeee, font-weight bold):
+      Format DOKLADNIE taki (nie zmieniaj struktury):
+      ☂️ Parasol: [tak/nie — krotkie uzasadnienie]  |  🧥 Kurtka: [tak/nie — uzasadnienie, co wieczorem w Ketach]
 
-4. ZADANIA TO DO:
-   Naglowek sekcji: tlo #f3e5f5, "Zadania"
-   Lista zadan, terminy pogrubione na czerwono
+      Reguly parasola: jesli max_precip_prob > 30% LUB total_precip_mm > 0.5mm w ktorymkolwiek miescie -> TAK
+      Reguly kurtki: min_temp < 10°C -> ciezka kurtka; 10-17°C -> kurtka; 18-23°C -> lekka bluza; > 24°C -> nie potrzeba
 
-5. WIADOMOSCI:
-   Naglowek: tlo #e8f5e9, "Wiadomosci"
-   Podsekcje: Swiat | Polska | Lokalne (krotkie naglowki)
-   Kazdy temat: pogrubiony tytul + 2 zdania
+3. SKRZYNKA ODBIORCZA (naglowek tlo #fff8e1):
+   Kazda wiadomosc: obramowanie, [NOWE] pogrubione, temat jako naglowek h4
+   Pilne/deadline: obramowanie 2px solid #e53935
 
-6. GAMING I DARMOWE GRY:
-   Naglowek: tlo #fce4ec, "Gaming"
-   Darmowe gry: wyroznic ramka #4caf50, pelna informacja
-   Pozostale newsy: lista
+4. ZADANIA TO DO (naglowek tlo #f3e5f5):
+   Lista, terminy pogrubione czerwono
+
+5. WIADOMOSCI (naglowek tlo #e8f5e9):
+   Podsekcje: Swiat | Polska | Lokalne. Kazdy temat: tytul + 2 zdania.
+
+6. GAMING I DARMOWE GRY (naglowek tlo #fce4ec):
+   Darmowe gry: ramka 2px solid #4caf50, pelna informacja (co, gdzie, do kiedy)
+   Pozostale gaming newsy: lista
 
 ---
 DANE:
 
-POGODA BIELSKO-BIALA (07:00-18:00):
-{weather_bb}
+== POGODA BIELSKO-BIALA (07-18) ==
+[wttr.in]     {fmt_source(bb_wttr)}
+[open-meteo]  {fmt_source(bb_openmeteo)}
+[yr.no]       {fmt_source(bb_yr)}
+[IMGW stacja] {fmt_imgw(bb_imgw)}
+IMGW_ALERTS: {imgw_alerts if imgw_alerts else 'brak'}
+BB_WARNINGS: {bb_warnings if bb_warnings else 'brak rozbieznosci'}
 
-POGODA KETY (16:00-23:00):
-{weather_kety}
+== POGODA KETY (16-23) ==
+[wttr.in]     {fmt_source(kety_wttr)}
+[open-meteo]  {fmt_source(kety_openmeteo)}
+[yr.no]       {fmt_source(kety_yr)}
+KETY_WARNINGS: {kety_warnings if kety_warnings else 'brak rozbieznosci'}
 
-SKRZYNKA (ostatnie 3 dni):
+== SKRZYNKA (ostatnie 3 dni) ==
 {emails}
 
-ZADANIA TO DO:
+== ZADANIA TO DO ==
 {todo}
 
-WIADOMOSCI SWIATOWE:
+== WIADOMOSCI SWIATOWE ==
 {news_world}
 
-WIADOMOSCI POLSKA:
+== WIADOMOSCI POLSKA ==
 {news_poland}
 
-WIADOMOSCI LOKALNE:
+== WIADOMOSCI LOKALNE ==
 {news_local[:2000]}
 
-GAMING / DARMOWE GRY:
+== GAMING / DARMOWE GRY ==
 {news_gaming}
 
 EPIC GAMES DARMOWE:
@@ -286,8 +516,8 @@ GOG DARMOWE:
 
 ---
 Zacznij od <!DOCTYPE html><html><body> i skoncz </body></html>.
-Caly email to jedna zewnetrzna tabela width="600" align="center" z bialym tlem i szarym obramowaniem.
-Kazda sekcja to oddzielna tabela wewnatrz tej zewnetrznej, z marginesem 16px.
+Caly email: jedna zewnetrzna tabela width="600" align="center" style="background:#ffffff;border:1px solid #e0e0e0;font-family:Arial,sans-serif;font-size:14px".
+Kazda sekcja: osobna tabela wewnatrz, width="100%", padding 16px.
 """
 
     print('Generuje raport przez Claude Sonnet...')
