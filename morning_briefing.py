@@ -1,5 +1,7 @@
 import os
 import json
+import re
+import xml.etree.ElementTree as ET
 import urllib.request
 import urllib.parse
 import zoneinfo
@@ -522,6 +524,46 @@ def fetch_article(article_url):
     return fetch_url(f'https://r.jina.ai/{article_url}', timeout=45)[:3000]
 
 
+def fetch_rss_items(url, max_items=6):
+    raw = fetch_url(url, timeout=20)
+    if not raw or raw.startswith('[Blad'):
+        return []
+    try:
+        root = ET.fromstring(raw)
+        items = []
+        for item in root.findall('.//item'):
+            title = (item.findtext('title') or '').strip()
+            link = (item.findtext('link') or '').strip()
+            desc = re.sub(r'<[^>]+>', '', (item.findtext('description') or ''))[:300].strip()
+            if title:
+                items.append({'title': title, 'link': link, 'desc': desc})
+        if not items:
+            for entry in root.findall('.//{http://www.w3.org/2005/Atom}entry'):
+                title = (entry.findtext('{http://www.w3.org/2005/Atom}title') or '').strip()
+                link_el = entry.find('{http://www.w3.org/2005/Atom}link')
+                link = (link_el.get('href') or '') if link_el is not None else ''
+                desc = re.sub(r'<[^>]+>', '', (
+                    entry.findtext('{http://www.w3.org/2005/Atom}summary') or
+                    entry.findtext('{http://www.w3.org/2005/Atom}content') or ''
+                ))[:300].strip()
+                if title:
+                    items.append({'title': title, 'link': link, 'desc': desc})
+        return items[:max_items]
+    except Exception:
+        return []
+
+
+def fmt_rss_items(items):
+    if not items:
+        return '[brak danych]'
+    lines = []
+    for it in items:
+        link_part = f' [{it["link"]}]' if it.get('link') else ''
+        desc_part = f' — {it["desc"][:200]}' if it.get('desc') else ''
+        lines.append(f'• {it["title"]}{link_part}{desc_part}')
+    return '\n'.join(lines)
+
+
 # ── Claude ────────────────────────────────────────────────────────────────────
 
 def call_claude(prompt):
@@ -582,45 +624,87 @@ def main():
     special_days_str = fmt_special_days(special_days)
 
     now_local = datetime.now(WARSAW_TZ)
-    is_weekend = now_local.weekday() >= 5  # 5=sobota, 6=niedziela
+    is_weekend = now_local.weekday() >= 5
+    is_holiday = any(typ == 'DZIEN_WOLNY' for typ, name in special_days)
+    is_free_day = is_weekend or is_holiday
 
-    print('Pobieram pogode (4 zrodla)...')
-    bb_wttr      = fetch_wttr('Bielsko-Biala,Poland', 6, 18)
-    bb_openmeteo = fetch_openmeteo(BB_LAT, BB_LON, 7, 18)
-    bb_yr        = fetch_yr(BB_LAT, BB_LON, 7, 18)
-    bb_imgw      = fetch_imgw_synop('BIELSKO')
-    bb_warnings  = compare_sources([bb_wttr, bb_openmeteo, bb_yr])
-    imgw_alerts  = fetch_imgw_warnings()
+    print('Pobieram pogode...')
+    imgw_alerts = fetch_imgw_warnings()
 
-    # Kęty: cały dzień w weekend, wieczór w tygodniu
-    kety_h_start = 6  if is_weekend else 16
+    if not is_free_day:
+        bb_wttr      = fetch_wttr('Bielsko-Biala,Poland', 6, 18)
+        bb_openmeteo = fetch_openmeteo(BB_LAT, BB_LON, 7, 18)
+        bb_yr        = fetch_yr(BB_LAT, BB_LON, 7, 18)
+        bb_imgw      = fetch_imgw_synop('BIELSKO')
+        bb_warnings  = compare_sources([bb_wttr, bb_openmeteo, bb_yr])
+        sunrise = bb_wttr.get('sunrise', '?') if bb_wttr else '?'
+        sunset  = bb_wttr.get('sunset',  '?') if bb_wttr else '?'
+    else:
+        bb_wttr = bb_openmeteo = bb_yr = bb_imgw = None
+        bb_warnings = ''
+        sunrise = sunset = '?'
+
+    kety_h_start = 6  if is_free_day else 16
     kety_h_end   = 23
     kety_wttr      = fetch_wttr('Kety,Poland', kety_h_start, kety_h_end)
     kety_openmeteo = fetch_openmeteo(KETY_LAT, KETY_LON, kety_h_start, kety_h_end)
     kety_yr        = fetch_yr(KETY_LAT, KETY_LON, kety_h_start, kety_h_end)
     kety_warnings  = compare_sources([kety_wttr, kety_openmeteo, kety_yr])
-    kety_label     = 'cały dzień (06:00-23:00)' if is_weekend else 'dom (16:00-23:00)'
-
-    sunrise = bb_wttr.get('sunrise', '?') if bb_wttr else '?'
-    sunset  = bb_wttr.get('sunset',  '?') if bb_wttr else '?'
+    kety_label     = 'cały dzień (06:00-23:00)' if is_free_day else 'dom (16:00-23:00)'
 
     print('Pobieram ruch drogowy...')
-    if not is_weekend:
+    if not is_free_day:
         traffic_kety_bb = fetch_traffic_osrm(KETY_LAT, KETY_LON, BB_LAT, BB_LON)
         traffic_bb_kety = fetch_traffic_osrm(BB_LAT, BB_LON, KETY_LAT, KETY_LON)
     else:
         traffic_kety_bb = None
         traffic_bb_kety = None
 
-    print('Pobieram newsy i gry...')
-    news_world  = fetch_news_rss('high tech AI cybersecurity economy business finance', lang='en', country='US')
-    news_poland = fetch_news_rss('Polska technologia cyberbezpieczenstwo gospodarka biznes finanse')
-    news_bb     = fetch_news_rss('Bielsko-Biała wydarzenia utrudnienia problemy')
-    news_kety   = fetch_news_rss('Kęty Oświęcim wydarzenia utrudnienia')
-    news_alerts = fetch_news_rss('Bielsko-Biała Kęty Oświęcim ostrzeżenie awaria skażenie prąd')
-    news_gaming = fetch_news_rss('free games Epic GOG Steam Amazon Prime Gaming', lang='en', country='US')
-    epic_games  = fetch_article('https://store.epicgames.com/en-US/free-games')
-    gog_free    = fetch_article('https://www.gog.com/en/games?features=free')
+    print('Pobieram newsy...')
+    world_ars        = fetch_rss_items('https://feeds.arstechnica.com/arstechnica/index', max_items=4)
+    world_bbc        = fetch_rss_items('https://feeds.bbci.co.uk/news/technology/rss.xml', max_items=4)
+    poland_oko       = fetch_rss_items('https://oko.press/feed/', max_items=5)
+    news_bb          = fetch_news_rss('Bielsko-Biała wydarzenia utrudnienia problemy')
+    news_kety        = fetch_news_rss('Kęty Oświęcim wydarzenia utrudnienia')
+    news_alerts      = fetch_news_rss('Bielsko-Biała Kęty Oświęcim ostrzeżenie awaria skażenie prąd')
+    gaming_gryonline = fetch_rss_items('https://www.gry-online.pl/rss/news.xml', max_items=5)
+    gaming_lowcygier = fetch_rss_items('https://lowcygier.pl/feed/', max_items=5)
+    epic_games       = fetch_article('https://store.epicgames.com/en-US/free-games')
+    gog_free         = fetch_article('https://www.gog.com/en/games?features=free')
+
+    # Warunkowe bloki danych i instrukcji pogodowych
+    if not is_free_day:
+        bb_weather_data = (
+            f"== POGODA BIELSKO-BIALA (07-18) ==\n"
+            f"[wttr.in]     {fmt_source(bb_wttr)}\n"
+            f"[open-meteo]  {fmt_source(bb_openmeteo)}\n"
+            f"[yr.no]       {fmt_source(bb_yr)}\n"
+            f"[IMGW stacja] {fmt_imgw(bb_imgw)}\n"
+            f"IMGW_ALERTS: {imgw_alerts if imgw_alerts else 'brak'}\n"
+            f"BB_WARNINGS: {bb_warnings if bb_warnings else 'brak rozbieznosci'}"
+        )
+        bb_weather_instruction = (
+            f"   a) Naglowek 'Bielsko-Biala — praca (07:00-18:00)', tlo #e8f4fd\n"
+            f"      Wschod slonca: {sunrise} | Zachod: {sunset}\n"
+            f"      Narracyjne 2-3 zdania z wnioskow ze wszystkich zrodel\n"
+            f"      Jesli IMGW_ALERTS niepuste: wiersz tlo #ffebee, ikona ⚠️ + tresc\n"
+            f"      Jesli BB_WARNINGS niepuste: wiersz tlo #fff3cd, ikona ⚠️ + tresc\n\n"
+            f"   b) Naglowek 'Kety — {kety_label}', tlo #e8fde8\n"
+            f"      Narracyjne 2-3 zdania\n"
+            f"      Jesli KETY_WARNINGS niepuste: wiersz tlo #fff3cd, ikona ⚠️ + tresc"
+        )
+        umbrella_rule = "bazuj na danych z obu miast"
+    else:
+        bb_weather_data = (
+            f"== POGODA BIELSKO-BIALA == POMINIĘTO (IS_FREE_DAY=TAK)\n"
+            f"IMGW_ALERTS: {imgw_alerts if imgw_alerts else 'brak'}"
+        )
+        bb_weather_instruction = (
+            f"   Tylko jedna sekcja: Naglowek 'Kety — {kety_label}', tlo #e8fde8\n"
+            f"   Narracyjne 2-3 zdania. Jesli KETY_WARNINGS niepuste: wiersz tlo #fff3cd, ikona ⚠️\n"
+            f"   NIE dodawaj sekcji Bielsko-Biala!"
+        )
+        umbrella_rule = "bazuj wylacznie na danych z Ket"
 
     prompt = f"""Jestes asystentem Michala tworzacym jego poranny raport emailowy. Dzis: {today}.
 
@@ -632,96 +716,81 @@ KRYTYCZNE ZASADY TECHNICZNE — email bedzie wyswietlany w Outlook.com:
 - Szerokosci jako liczby bez jednostki w atrybucie width (np. width="600")
 - Kolory jako hex (#ffffff), nie rgba()
 - Pisz po polsku
+- Linki: <a href="URL" style="color:#1a73e8;text-decoration:none">Tytuł</a>
 
 STRUKTURA (w tej kolejnosci):
 
 1. NAGLOWEK: tabela width="600", tlo #1a73e8, bialy tekst, emoji slonce, "Poranny Raport", data i dzien tygodnia
 
-2. SEKCJA POGODA:
+2. SEKCJA POGODA — IS_FREE_DAY: {'TAK' if is_free_day else 'NIE'}:
    NIE rob tabelki godzin. Krotkie podsumowanie narracyjne (max 2-3 zdania na miasto).
-   Skupiaj sie WYLACZNIE na: ryzyku opadow (kiedy, ile), zakresie temperatury (czy zimno/cieplo/upal/mroz), silnym wietrze (>30km/h).
+   Skupiaj sie WYLACZNIE na: ryzyku opadow (kiedy, ile), zakresie temperatury, silnym wietrze (>30km/h).
    Jesli min_temp < 0: wiersz ostrzezenia tlo #ffe0e0 "Uwaga: mróz!"
 
-   a) Naglowek "Bielsko-Biala — praca (07:00-18:00)", tlo #e8f4fd
-      Wschod slonca: {sunrise} | Zachod: {sunset}
-      Narracyjne 2-3 zdania z wnioskow ze wszystkich zrodel
-      Jesli IMGW_ALERTS niepuste: wiersz tlo #ffebee, ikona ⚠️ + tresc alertu
-      Jesli BB_WARNINGS niepuste: wiersz tlo #fff3cd, ikona ⚠️ + tresc
+{bb_weather_instruction}
 
-   b) Naglowek "Kety — {kety_label}", tlo #e8fde8
-      Narracyjne 2-3 zdania
-      Jesli KETY_WARNINGS niepuste: wiersz tlo #fff3cd, ikona ⚠️ + tresc
-
-   c) PODSUMOWANIE (osobny wiersz, tlo #eeeeee, font-weight bold):
-      Format DOKLADNIE taki (nie zmieniaj struktury):
-      ☂️ Parasol: [tak/nie — krotkie uzasadnienie]  |  🧥 Kurtka: [tak/nie — uzasadnienie, co wieczorem w Ketach]
-
-      Reguly parasola: jesli max_precip_prob > 30% LUB total_precip_mm > 0.5mm w ktorymkolwiek miescie -> TAK
-      Reguly kurtki: min_temp < 10°C -> ciezka kurtka; 10-17°C -> kurtka; 18-23°C -> lekka bluza; > 24°C -> nie potrzeba
+   PODSUMOWANIE (zawsze, osobny wiersz tlo #eeeeee font-weight bold):
+   ☂️ Parasol: [tak/nie — krotkie uzasadnienie]  |  🧥 Kurtka: [tak/nie — uzasadnienie]
+   Reguly parasola: max_precip_prob > 30% LUB total_precip_mm > 0.5mm -> TAK
+   Reguly kurtki: < 10°C -> ciezka kurtka; 10-17°C -> kurtka; 18-23°C -> lekka bluza; > 24°C -> nie potrzeba
+   ({umbrella_rule})
 
 3. SEKCJA KALENDARZ (naglowek tlo #e8f0fe, ikona 📅 "Kalendarz i ważne dni"):
    a) Jesli SPECIAL_DAYS zawiera DZIEN_WOLNY: prominentny wiersz tlo #ffebee, pogrubiony, ikona 🎉
       Jesli JUTRO_WOLNE: wiersz tlo #fff3cd, ikona ⏰ "Jutro dzień wolny: [nazwa]"
       Jesli DZIEN_SPECJALNY: wiersz tlo #e8f5e9, ikona 🎂/💐/👨‍👩‍👧 zaleznie od dnia
-   b) Lista wydarzen z kalendarza (jesli sa):
-      - Kazde wydarzenie: [godzina] Tytuł | Miejsce (jesli jest)
-      - Caly dzien: ikona 📌 zamiast godziny
-      - WAZNE: ikona 🔴 przy tytule
-      - Krotki podglad opisu jesli nie jest pusty
-   c) Jesli CALENDAR_EVENTS == "Brak wydarzen": jeden wiersz "Wolny dzień — brak spotkań"
-   Cala sekcja: jezeli jest DZIEN_WOLNY to dodaj subtelny zolty ramki do calej sekcji (border-left: 4px solid #fbc02d)
+   b) Lista wydarzen z kalendarza:
+      - [godzina] Tytuł | Miejsce; cały dzień: ikona 📌; WAZNE: ikona 🔴
+   c) Jesli brak wydarzen: "Wolny dzień — brak spotkań"
+   Cala sekcja: jesli DZIEN_WOLNY to border-left: 4px solid #fbc02d
 
-4. DOJAZD DO PRACY (naglowek tlo #e8eaf6, ikona 🚗 "Dojazd Kęty → Bielsko-Biała"):
-   IS_WEEKEND: {'TAK' if is_weekend else 'NIE'}
-   Jesli IS_WEEKEND=TAK: jeden wiersz szary "🏖️ Weekend — brak dojazdu do pracy"
-   Jesli IS_WEEKEND=NIE:
-     Czas bazowy bez korkow z OSRM — informuj ze to estymacja bez real-time traffic.
-     - 🚗 Rano (wyjazd Kęty 7:45): ok. X min | Y km → przyjazd ok. [7:45 + X min]
-     - 🏠 Powrót (wyjazd BB 16:25): ok. X min | Y km → przyjazd ok. [16:25 + X min]
+4. DOJAZD DO PRACY (naglowek tlo #e8eaf6, ikona 🚗):
+   IS_FREE_DAY: {'TAK' if is_free_day else 'NIE'}
+   Jesli IS_FREE_DAY=TAK: "🏖️ Dzień wolny — brak dojazdu do pracy"
+   Jesli IS_FREE_DAY=NIE:
+     Czas bazowy bez korkow (OSRM, estymacja bez real-time traffic).
+     - 🚗 Rano (wyjazd Kęty 7:45): ok. X min | Y km → przyjazd ok. [oblicz]
+     - 🏠 Powrót (wyjazd BB 16:25): ok. X min | Y km → przyjazd ok. [oblicz]
      Jesli brak danych: "Brak danych o trasie"
 
 5. SKRZYNKA ODBIORCZA (naglowek tlo #fff8e1, ikona 📬):
-   Przeanalizuj WSZYSTKIE emaile z sekcji SKRZYNKA i wyswietl TYLKO te, ktore spelniaja co najmniej jeden z kryteriow:
-   a) Wymagaja REAKCJI uzytkownika w ciagu 3 dni (odpowiedz, potwierdzenie, platnosc, decyzja, termin, spotkanie do zaakceptowania)
-   b) Alert bezpieczenstwa (weryfikacja logowania, zmiana hasla, podejrzana aktywnosc, phishing warning, 2FA, konto zablokowane)
-
-   Dla kazdego zakwalifikowanego emaila:
-   - Temat pogrubiony jako naglowek, [NOWE] jesli nieprzeczytany
-   - Nadawca + data (krotko)
-   - 1 zdanie: DLACZEGO wymaga akcji / jaki rodzaj alertu
-   - Obramowanie 2px solid #e53935 jesli deadline <= 2 dni lub alert bezpieczenstwa
-   - Obramowanie 1px solid #fbc02d jesli deadline 2-3 dni
-
-   Jesli ZADNA wiadomosc nie kwalifikuje sie: jeden wiersz szary "Brak pilnych wiadomosci — skrzynka spokojna ✅"
-   NIE pokazuj zwyklych newsletterow, reklam, powiadomien serwisowych, potwierdzen zamowien bez akcji.
+   Wyswietl TYLKO emaile spelniajace co najmniej jeden z kryteriow:
+   a) Wymagaja reakcji uzytkownika w ciagu 3 dni (odpowiedz, potwierdzenie, platnosc, decyzja, termin)
+   b) Alert bezpieczenstwa (weryfikacja logowania, zmiana hasla, podejrzana aktywnosc, phishing, 2FA)
+   Dla kazdego: temat pogrubiony ([NOWE] jesli nieprzeczytany), nadawca+data, 1 zdanie dlaczego akcja.
+   Obramowanie 2px solid #e53935 jesli deadline <= 2 dni lub alert bezpieczenstwa.
+   Obramowanie 1px solid #fbc02d jesli deadline 2-3 dni.
+   Jesli zadna nie kwalifikuje sie: "Brak pilnych wiadomosci — skrzynka spokojna ✅"
 
 6. ZADANIA TO DO (naglowek tlo #f3e5f5):
    Lista, terminy pogrubione czerwono
 
 7. WIADOMOSCI (naglowek tlo #e8f5e9):
-   Podsekcje w tej kolejnosci:
-   a) SWIAT (High Tech / AI, Cyberbezpieczenstwo, Ekonomia & Biznes) — 3-4 najwazniejsze tematy, tytul + 2 zdania
-   b) POLSKA (te same obszary tematyczne) — 3-4 tematy, tytul + 2 zdania
+   WAZNE: dla kazdego newsa z linkiem — tytuł jako <a href="URL" style="color:#1a73e8;text-decoration:none">Tytuł</a>
+   Podsekcje:
+   a) SWIAT — High Tech / AI / Cyberbezpieczenstwo / Ekonomia & Biznes:
+      Zrodla: Ars Technica + BBC Tech. 4-6 najwazniejszych. Kazdy: tytuł-link + 2 zdania po polsku.
+   b) POLSKA (te same obszary):
+      Zrodlo: OKO.press. 3-5 artykulow z linkami + 2 zdania po polsku.
    c) LOKALNE — Bielsko-Biala i Kety/Oswiecim:
-      - ALERTY KRYTYCZNE (jesli sa): tlo #ffebee, ikona 🔴 — warunki pogodowe, skazenie wody, problemy z prasdem/mediami, katastrofy
-      - Eventy i wydarzenia — co sie dzieje dzisiaj/jutro w okolicy
-      - Utrudnienia i problemy — remonty, korki, zamkniecia
-      Jesli brak lokalnych alertow: jeden wiersz "Brak alertow krytycznych w okolicy ✅"
+      - ALERTY KRYTYCZNE (jesli sa): tlo #ffebee, ikona 🔴 — warunki pogodowe, skazenie, awarie
+      - Eventy i wydarzenia, utrudnienia i problemy
+      Jesli brak alertow: "Brak alertow krytycznych ✅"
 
 8. GAMING I DARMOWE GRY (naglowek tlo #fce4ec):
-   Darmowe gry: ramka 2px solid #4caf50, pelna informacja (co, gdzie, do kiedy)
-   Pozostale gaming newsy: lista
+   a) DARMOWE GRY (ramka 2px solid #4caf50, tlo #f1f8e9, NA GORZE!):
+      Z danych EPIC i GOG wyodrebnij konkretne gry. Kazda: nazwa jako <a href="URL">Gra</a>.
+      Podaj termin jesli widoczny. Jesli brak konkretnych gier: "Brak darmowych gier w tej chwili"
+   b) GRY-ONLINE.PL — NEWSY:
+      Kazdy artykul: tytuł jako <a href="URL" style="color:#1a73e8;text-decoration:none">Tytuł</a>
+      Pod spodem 2-3 punkty (•) streszczajace na podstawie tytulu i opisu.
+   c) ŁOWCY GIER:
+      Kazdy: <a href="URL" style="color:#1a73e8;text-decoration:none">Tytuł</a> — 1 zdanie opisu
 
 ---
 DANE:
 
-== POGODA BIELSKO-BIALA (07-18) ==
-[wttr.in]     {fmt_source(bb_wttr)}
-[open-meteo]  {fmt_source(bb_openmeteo)}
-[yr.no]       {fmt_source(bb_yr)}
-[IMGW stacja] {fmt_imgw(bb_imgw)}
-IMGW_ALERTS: {imgw_alerts if imgw_alerts else 'brak'}
-BB_WARNINGS: {bb_warnings if bb_warnings else 'brak rozbieznosci'}
+{bb_weather_data}
 
 == POGODA KETY ({kety_label}) ==
 [wttr.in]     {fmt_source(kety_wttr)}
@@ -737,11 +806,11 @@ CALENDAR_EVENTS:
 {calendar_events}
 
 == DOJAZD (OSRM, bez real-time traffic) ==
-IS_WEEKEND: {'TAK' if is_weekend else 'NIE'}
+IS_FREE_DAY: {'TAK' if is_free_day else 'NIE'}
 Wyjazd rano: Kety 7:45 -> Bielsko-Biala
 Wyjazd popol.: Bielsko-Biala 16:25 -> Kety
-Kety -> Bielsko-Biala: {f"{traffic_kety_bb['duration_min']} min | {traffic_kety_bb['distance_km']} km" if traffic_kety_bb else ('WEEKEND' if is_weekend else 'BLAD')}
-Bielsko-Biala -> Kety: {f"{traffic_bb_kety['duration_min']} min | {traffic_bb_kety['distance_km']} km" if traffic_bb_kety else ('WEEKEND' if is_weekend else 'BLAD')}
+Kety -> Bielsko-Biala: {f"{traffic_kety_bb['duration_min']} min | {traffic_kety_bb['distance_km']} km" if traffic_kety_bb else ('WOLNY DZIEN' if is_free_day else 'BLAD')}
+Bielsko-Biala -> Kety: {f"{traffic_bb_kety['duration_min']} min | {traffic_bb_kety['distance_km']} km" if traffic_bb_kety else ('WOLNY DZIEN' if is_free_day else 'BLAD')}
 
 == SKRZYNKA (ostatnie 3 dni, tylko inbox) ==
 {emails}
@@ -749,11 +818,14 @@ Bielsko-Biala -> Kety: {f"{traffic_bb_kety['duration_min']} min | {traffic_bb_ke
 == ZADANIA TO DO ==
 {todo}
 
-== WIADOMOSCI SWIAT (High Tech / AI / Cybersec / Economy / Business) ==
-{news_world[:3000]}
+== WIADOMOSCI SWIAT — Ars Technica ==
+{fmt_rss_items(world_ars)}
 
-== WIADOMOSCI POLSKA (High Tech / Cybersec / Gospodarka / Biznes) ==
-{news_poland[:3000]}
+== WIADOMOSCI SWIAT — BBC Technology ==
+{fmt_rss_items(world_bbc)}
+
+== WIADOMOSCI POLSKA — OKO.press ==
+{fmt_rss_items(poland_oko)}
 
 == WIADOMOSCI LOKALNE BIELSKO-BIALA ==
 {news_bb[:2000]}
@@ -765,13 +837,16 @@ Bielsko-Biala -> Kety: {f"{traffic_bb_kety['duration_min']} min | {traffic_bb_ke
 IMGW_ALERTS: {imgw_alerts if imgw_alerts else 'brak'}
 {news_alerts[:1500]}
 
-== GAMING / DARMOWE GRY ==
-{news_gaming}
+== GAMING — GRY-ONLINE.PL ==
+{fmt_rss_items(gaming_gryonline)}
 
-EPIC GAMES DARMOWE:
+== GAMING — ŁOWCY GIER ==
+{fmt_rss_items(gaming_lowcygier)}
+
+== DARMOWE GRY — EPIC GAMES ==
 {epic_games}
 
-GOG DARMOWE:
+== DARMOWE GRY — GOG ==
 {gog_free}
 
 ---
