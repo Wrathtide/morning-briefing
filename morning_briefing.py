@@ -51,7 +51,7 @@ def fetch_emails(token):
     })
     messages = result.get('value', [])
     if not messages:
-        return 'Brak wiadomości z ostatnich 3 dni.'
+        return 'Brak wiadomosci z ostatnich 3 dni.'
     lines = []
     for m in messages:
         status = '[NOWE] ' if not m.get('isRead') else ''
@@ -60,7 +60,7 @@ def fetch_emails(token):
             f"{status}Od: {sender}\n"
             f"Temat: {m.get('subject', '(brak tematu)')}\n"
             f"Data: {m.get('receivedDateTime', '')[:10]}\n"
-            f"Podgląd: {m.get('bodyPreview', '')[:200]}\n"
+            f"Podglad: {m.get('bodyPreview', '')[:200]}\n"
         )
     return '\n'.join(lines)
 
@@ -76,8 +76,8 @@ def fetch_todo_tasks(token):
         for task in tasks_result.get('value', []):
             due = task.get('dueDateTime')
             due_str = f" [termin: {due['dateTime'][:10]}]" if due else ''
-            task_lines.append(f"• [{lst['displayName']}] {task['title']}{due_str}")
-    return '\n'.join(task_lines) if task_lines else 'Brak aktywnych zadań.'
+            task_lines.append(f"- [{lst['displayName']}] {task['title']}{due_str}")
+    return '\n'.join(task_lines) if task_lines else 'Brak aktywnych zadan.'
 
 
 def fetch_url(url, timeout=30):
@@ -86,11 +86,43 @@ def fetch_url(url, timeout=30):
         with urllib.request.urlopen(req, timeout=timeout) as r:
             return r.read().decode('utf-8', errors='replace')
     except Exception as e:
-        return f'[Błąd: {e}]'
+        return f'[Blad: {e}]'
 
 
-def fetch_weather(city):
-    return fetch_url(f'https://wttr.in/{urllib.parse.quote(city)}?format=j1')
+def fetch_weather_json(city):
+    raw = fetch_url(f'https://wttr.in/{urllib.parse.quote(city)}?format=j1')
+    try:
+        return json.loads(raw)
+    except Exception:
+        return None
+
+
+def parse_weather(data, hour_times):
+    """Wyciaga dane pogodowe dla wybranych godzin (np. [600, 900, 1200, 1500, 1800])."""
+    if not data:
+        return '[Brak danych pogodowych]'
+    try:
+        today = data['weather'][0]
+        astro = today.get('astronomy', [{}])[0]
+        lines = [
+            f"Min: {today['mintempC']}C / Max: {today['maxtempC']}C",
+            f"Wschod slonca: {astro.get('sunrise','?')} | Zachod: {astro.get('sunset','?')}",
+            '',
+        ]
+        for h in today['hourly']:
+            t = int(h['time'])
+            if t in hour_times:
+                hour_h = t // 100
+                desc = h['weatherDesc'][0]['value'] if h.get('weatherDesc') else ''
+                chance_rain = h.get('chanceofrain', '0')
+                lines.append(
+                    f"{hour_h:02d}:00 | {h['tempC']}C (odczuwalnie {h['FeelsLikeC']}C) | "
+                    f"{desc} | opady: {h['precipMM']}mm ({chance_rain}% szans) | "
+                    f"wiatr: {h['windspeedKmph']} km/h {h.get('winddir16Point','')}"
+                )
+        return '\n'.join(lines)
+    except Exception as e:
+        return f'[Blad parsowania pogody: {e}]'
 
 
 def fetch_news_rss(query, lang='pl', country='PL'):
@@ -140,7 +172,7 @@ def send_email_graph(token, subject, html_body):
         },
     )
     with urllib.request.urlopen(req, timeout=30) as r:
-        pass  # 202 Accepted, brak body
+        pass  # 202 Accepted
 
 
 def main():
@@ -152,8 +184,15 @@ def main():
     print('Pobieram dane...')
     emails = fetch_emails(access_token)
     todo = fetch_todo_tasks(access_token)
-    weather_kety = fetch_weather('Kety,Poland')
-    weather_bb = fetch_weather('Bielsko-Biala,Poland')
+
+    # Pogoda — godzinowa
+    # Bielsko-Biala: godziny pracy/dnia 07-18 -> wttr.in hourly: 600 900 1200 1500 1800
+    # Kety: popoludnie/wieczor 16-23 -> wttr.in hourly: 1500 1800 2100
+    weather_bb_json = fetch_weather_json('Bielsko-Biala,Poland')
+    weather_kety_json = fetch_weather_json('Kety,Poland')
+    weather_bb = parse_weather(weather_bb_json, [600, 900, 1200, 1500, 1800])
+    weather_kety = parse_weather(weather_kety_json, [1500, 1800, 2100])
+
     news_world = fetch_news_rss('world news today', lang='en', country='US')
     news_poland = fetch_news_rss('Polska wiadomosci dzis')
     news_local = fetch_news_rss('Kety Bielsko-Biala')
@@ -163,57 +202,78 @@ def main():
 
     prompt = f"""Jestes asystentem Michala tworzacym jego poranny raport. Dzis: {today}.
 
-Na podstawie ponizszych danych przygotuj strone HTML — czytelna, estetyczna, z sekcjami.
-Pisz po polsku. Uzywaj emoji jako ikon sekcji. Nie powtarzaj danych — wyciagaj z nich esencje.
+Przygotuj kompletna strone HTML. Pisz po polsku. Sekcje w tej KOLEJNOSCI:
 
-ZASADY FORMATOWANIA:
-- Skrzynka odbiorcza: wypisz NOWE wiadomosci, zaznacz jesli cos wyglada na deadline/pilne
-- Zadania To Do: lista zadan z terminami, posortowana priorytetowo
-- Pogoda: temperatura min/max, odczuwalna, opady, wiatr. Jedno zdanie podsumowania.
-- Wiadomosci swiatowe: 3-4 najwazniejsze tematy, po 2 zdania kazdy
-- Wiadomosci Polska: 3-4 tematy, po 2 zdania
-- Wiadomosci lokalne Kety/Bielsko: wszystko co jest, krotko
-- Darmowe gry: PELNA INFO — tytul, opis, platforma, do kiedy bezplatna
-- Gaming news: tylko tytuly i jedno zdanie opisu
+1. POGODA (pierwsza i najwazniejsza sekcja)
+2. SKRZYNKA ODBIORCZA
+3. ZADANIA TO DO
+4. WIADOMOSCI (swiatowe, polskie, lokalne w jednej sekcji z podsekcjami)
+5. GAMING I DARMOWE GRY
 
-DANE ZRODLOWE:
+---
+ZASADY SEKCJI POGODA:
+Pokaz dwie karty obok siebie (lub jedna pod druga na mobile):
+- Karta "Bielsko-Biala - praca (07:00-18:00)": tabela godzin z temperatura, opisem, opadami, wiatrem
+- Karta "Kety - dom (16:00-23:00)": tabela godzin z temperatura, opisem, opadami, wiatrem
+Na gorze kazdej karty: min/max dnia, wschod/zachod slonca.
+Jesli sa opady > 0 lub duzy wiatr (>30km/h) — zaznacz czerwonym/pomaranczowym kolorem.
+Jedno zdanie komentarza: czy brac parasol/kurtke.
 
-\U0001f4e7 SKRZYNKA ODBIORCZA (ostatnie 3 dni):
+ZASADY POZOSTALYCH SEKCJI:
+- Skrzynka: NOWE wiadomosci pogrubione, zaznacz pilne/deadline czerwona ramka
+- Zadania To Do: pogrupowane po liscie, terminy pogrubione
+- Wiadomosci swiatowe: 3-4 tematy, 2 zdania kazdy
+- Wiadomosci Polska: 3-4 tematy, 2 zdania kazdy
+- Wiadomosci lokalne: wszystko co jest, krotko
+- Darmowe gry: PELNA INFO — tytul, opis, platforma, do kiedy bezplatna; wyroznic wizualnie
+- Gaming news: tytul + jedno zdanie
+
+---
+DANE POGODOWE:
+
+BIELSKO-BIALA (07:00-18:00):
+{weather_bb}
+
+KETY (16:00-23:00):
+{weather_kety}
+
+---
+SKRZYNKA (ostatnie 3 dni):
 {emails}
 
-✅ ZADANIA TO DO:
+ZADANIA TO DO:
 {todo}
 
-\U0001f324 POGODA KETY:
-{weather_kety[:1800]}
-
-\U0001f324 POGODA BIELSKO-BIALA:
-{weather_bb[:1800]}
-
-\U0001f30d WIADOMOSCI SWIATOWE:
+WIADOMOSCI SWIATOWE:
 {news_world}
 
-\U0001f1f5\U0001f1f1 WIADOMOSCI POLSKA:
+WIADOMOSCI POLSKA:
 {news_poland}
 
-\U0001f4cd WIADOMOSCI LOKALNE:
+WIADOMOSCI LOKALNE:
 {news_local[:2000]}
 
-\U0001f3ae GAMING / DARMOWE GRY (RSS):
+GAMING / DARMOWE GRY:
 {news_gaming}
 
-\U0001f381 EPIC GAMES DARMOWE GRY:
+EPIC GAMES DARMOWE:
 {epic_games}
 
-\U0001f381 GOG DARMOWE GRY:
+GOG DARMOWE:
 {gog_free}
 
-Napisz kompletna strone HTML zaczynajac od <!DOCTYPE html> i konczac na </html>.
-Dodaj na gorze naglowek "Poranny raport - {today}" oraz aktualna date.
-Uzywaj emoji w naglowkach sekcji.
-Uzywaj czcionki bezszeryfowej (font-family: system-ui, sans-serif), jasnego tla (#f9f9f9),
-kart z bialym tlem i cieniem dla sekcji, czytelnych odstepow.
-Strona ma byc wygodna do czytania na telefonie (max-width: 720px, margin: auto).
+---
+WYMAGANIA HTML:
+- Zacznij od <!DOCTYPE html>, skoncz na </html>
+- Naglowek strony: "Poranny raport - {today}"
+- font-family: system-ui, -apple-system, sans-serif
+- Tlo strony: #f0f2f5
+- max-width: 680px, margin: 0 auto, padding: 16px
+- Karty sekcji: background white, border-radius: 12px, box-shadow: 0 2px 8px rgba(0,0,0,0.08), padding: 20px, margin-bottom: 16px
+- Naglowki sekcji: emoji + nazwa, font-size: 18px, font-weight: 700, margin-bottom: 12px, color: #1a1a2e
+- Tabela pogody: width:100%, border-collapse:collapse, kazda komorka padding:6px 8px, naprzemienne tlo wierszy
+- Responsive: na mobile (max-width:480px) karty pogody jedna pod druga
+- Kolory alertow: opady>0.5mm lub wiatr>30km/h -> komorka background #fff3cd; opady>3mm -> #ffe0e0
 """
 
     print('Generuje raport przez Claude Sonnet...')
