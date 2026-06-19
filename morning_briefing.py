@@ -20,7 +20,7 @@ def refresh_access_token():
         'grant_type': 'refresh_token',
         'client_id': MS_CLIENT_ID,
         'refresh_token': MS_REFRESH_TOKEN,
-        'scope': 'Mail.Read Mail.Send Tasks.Read User.Read offline_access',
+        'scope': 'Mail.Read Mail.Send Tasks.Read User.Read Calendars.Read offline_access',
     }).encode()
     req = urllib.request.Request(
         'https://login.microsoftonline.com/consumers/oauth2/v2.0/token',
@@ -83,6 +83,160 @@ def fetch_todo_tasks(token):
             due_str = f" [termin: {due['dateTime'][:10]}]" if due else ''
             task_lines.append(f"- [{lst['displayName']}] {task['title']}{due_str}")
     return '\n'.join(task_lines) if task_lines else 'Brak aktywnych zadan.'
+
+
+# ── Kalendarz: polskie dni specjalne ─────────────────────────────────────────
+
+def _easter(year):
+    a = year % 19
+    b, c = divmod(year, 100)
+    d, e = divmod(b, 4)
+    f = (b + 8) // 25
+    g = (b - f + 1) // 3
+    h = (19 * a + b - d - g + 15) % 30
+    i, k = divmod(c, 4)
+    l = (32 + 2 * e + 2 * i - h - k) % 7
+    m = (a + 11 * h + 22 * l) // 451
+    month = (h + l - 7 * m + 114) // 31
+    day = (h + l - 7 * m + 114) % 31 + 1
+    from datetime import date
+    return date(year, month, day)
+
+
+def get_polish_special_days(d):
+    """Zwraca liste (typ, nazwa) specjalnych dni dla daty d."""
+    from datetime import date, timedelta
+    year, month, day = d.year, d.month, d.day
+    today = date(year, month, day)
+    results = []
+
+    # Stale dni wolne od pracy
+    fixed = {
+        (1, 1): 'Nowy Rok',
+        (6, 1): 'Trzech Króli',
+        (1, 5): 'Święto Pracy',
+        (3, 5): 'Konstytucja 3 Maja',
+        (15, 8): 'Wniebowzięcie NMP / Święto Wojska Polskiego',
+        (1, 11): 'Wszystkich Świętych',
+        (11, 11): 'Dzień Niepodległości',
+        (25, 12): 'Boże Narodzenie (1. dzień)',
+        (26, 12): 'Boże Narodzenie (2. dzień)',
+    }
+    if (day, month) in fixed:
+        results.append(('DZIEN_WOLNY', fixed[(day, month)]))
+
+    # Ruchome swieta
+    easter = _easter(year)
+    moving = {
+        easter:                  ('DZIEN_WOLNY', 'Niedziela Wielkanocna'),
+        easter + timedelta(1):   ('DZIEN_WOLNY', 'Poniedziałek Wielkanocny'),
+        easter + timedelta(49):  ('DZIEN_WOLNY', 'Zielone Świątki'),
+        easter + timedelta(60):  ('DZIEN_WOLNY', 'Boże Ciało'),
+    }
+    if today in moving:
+        results.append(moving[today])
+
+    # Nieoficjalne dni specjalne
+    unofficial = {
+        (21, 1):  'Dzień Babci',
+        (22, 1):  'Dzień Dziadka',
+        (14, 2):  'Walentynki',
+        (8, 3):   'Dzień Kobiet',
+        (21, 3):  'Pierwszy Dzień Wiosny',
+        (26, 5):  'Dzień Matki',
+        (1, 6):   'Dzień Dziecka',
+        (23, 6):  'Dzień Ojca',
+        (14, 10): 'Dzień Edukacji Narodowej',
+        (1, 11):  'Zaduszki',
+        (11, 11): 'Dzień Niepodległości',
+    }
+    if (day, month) in unofficial and ('DZIEN_WOLNY', unofficial[(day, month)]) not in results:
+        results.append(('DZIEN_SPECJALNY', unofficial[(day, month)]))
+
+    # Jutro dzien wolny — ostrzezenie wieczorne
+    tomorrow = today + timedelta(1)
+    for key, name in fixed.items():
+        if key == (tomorrow.day, tomorrow.month):
+            results.append(('JUTRO_WOLNE', name))
+            break
+    for move_date, (_, name) in moving.items():
+        if move_date == tomorrow:
+            results.append(('JUTRO_WOLNE', name))
+            break
+
+    return results
+
+
+def fmt_special_days(special_days):
+    """Formatuje liste dni specjalnych do stringa dla promptu."""
+    if not special_days:
+        return 'Brak'
+    lines = []
+    for typ, name in special_days:
+        if typ == 'DZIEN_WOLNY':
+            lines.append(f'DZIEN WOLNY OD PRACY: {name}')
+        elif typ == 'DZIEN_SPECJALNY':
+            lines.append(f'DZIEN SPECJALNY: {name}')
+        elif typ == 'JUTRO_WOLNE':
+            lines.append(f'JUTRO DZIEN WOLNY: {name}')
+    return '\n'.join(lines)
+
+
+# ── Kalendarz: Graph API ──────────────────────────────────────────────────────
+
+def fetch_calendar_events(token):
+    """Pobiera zdarzenia z Outlook Calendar na dzisiaj."""
+    now_local = datetime.now(WARSAW_TZ)
+    today_start = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
+    today_end   = now_local.replace(hour=23, minute=59, second=59, microsecond=0)
+
+    url = (
+        f"{GRAPH_BASE}/me/calendarView"
+        f"?startDateTime={today_start.strftime('%Y-%m-%dT%H:%M:%S')}"
+        f"&endDateTime={today_end.strftime('%Y-%m-%dT%H:%M:%S')}"
+        f"&$select=subject,start,end,location,isAllDay,importance,bodyPreview"
+        f"&$orderby=start/dateTime&$top=50"
+    )
+    req = urllib.request.Request(url, headers={
+        'Authorization': f'Bearer {token}',
+        'Accept': 'application/json',
+        'Prefer': 'outlook.timezone="Central European Standard Time"',
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            data = json.loads(r.read())
+    except Exception as e:
+        return f'[Blad pobierania kalendarza: {e}]'
+
+    events = data.get('value', [])
+    if not events:
+        return 'Brak wydarzen w kalendarzu na dzisiaj.'
+
+    lines = []
+    for e in events:
+        subject = e.get('subject', '(brak tytulu)')
+        is_all_day = e.get('isAllDay', False)
+        importance = e.get('importance', 'normal')
+        location = (e.get('location') or {}).get('displayName', '')
+        preview = (e.get('bodyPreview') or '')[:120]
+
+        if is_all_day:
+            time_str = '[cały dzień]'
+        else:
+            try:
+                s = e['start']['dateTime'][:16].replace('T', ' ')
+                en = e['end']['dateTime'][11:16]
+                time_str = f"{s[-5:]}-{en}"
+            except Exception:
+                time_str = '?'
+
+        imp = ' [!WAŻNE]' if importance == 'high' else ''
+        loc = f' @ {location}' if location else ''
+        lines.append(f"{time_str}{imp}: {subject}{loc}")
+        if preview and preview.strip():
+            lines.append(f"  {preview.strip()}")
+
+    return '\n'.join(lines)
 
 
 def fetch_url(url, timeout=30, extra_headers=None):
@@ -394,9 +548,12 @@ def main():
     print('Odswiezam token Microsoft...')
     access_token = refresh_access_token()
 
-    print('Pobieram email i zadania...')
+    print('Pobieram email, zadania i kalendarz...')
     emails = fetch_emails(access_token)
     todo = fetch_todo_tasks(access_token)
+    calendar_events = fetch_calendar_events(access_token)
+    special_days = get_polish_special_days(datetime.now(WARSAW_TZ).date())
+    special_days_str = fmt_special_days(special_days)
 
     print('Pobieram pogode (4 zrodla)...')
     bb_wttr      = fetch_wttr('Bielsko-Biala,Poland', 6, 18)
@@ -459,7 +616,19 @@ STRUKTURA (w tej kolejnosci):
       Reguly parasola: jesli max_precip_prob > 30% LUB total_precip_mm > 0.5mm w ktorymkolwiek miescie -> TAK
       Reguly kurtki: min_temp < 10°C -> ciezka kurtka; 10-17°C -> kurtka; 18-23°C -> lekka bluza; > 24°C -> nie potrzeba
 
-3. SKRZYNKA ODBIORCZA (naglowek tlo #fff8e1):
+3. SEKCJA KALENDARZ (naglowek tlo #e8f0fe, ikona 📅 "Kalendarz i ważne dni"):
+   a) Jesli SPECIAL_DAYS zawiera DZIEN_WOLNY: prominentny wiersz tlo #ffebee, pogrubiony, ikona 🎉
+      Jesli JUTRO_WOLNE: wiersz tlo #fff3cd, ikona ⏰ "Jutro dzień wolny: [nazwa]"
+      Jesli DZIEN_SPECJALNY: wiersz tlo #e8f5e9, ikona 🎂/💐/👨‍👩‍👧 zaleznie od dnia
+   b) Lista wydarzen z kalendarza (jesli sa):
+      - Kazde wydarzenie: [godzina] Tytuł | Miejsce (jesli jest)
+      - Caly dzien: ikona 📌 zamiast godziny
+      - WAZNE: ikona 🔴 przy tytule
+      - Krotki podglad opisu jesli nie jest pusty
+   c) Jesli CALENDAR_EVENTS == "Brak wydarzen": jeden wiersz "Wolny dzień — brak spotkań"
+   Cala sekcja: jezeli jest DZIEN_WOLNY to dodaj subtelny zolty ramki do calej sekcji (border-left: 4px solid #fbc02d)
+
+4. SKRZYNKA ODBIORCZA (naglowek tlo #fff8e1):
    Kazda wiadomosc: obramowanie, [NOWE] pogrubione, temat jako naglowek h4
    Pilne/deadline: obramowanie 2px solid #e53935
 
@@ -489,6 +658,13 @@ BB_WARNINGS: {bb_warnings if bb_warnings else 'brak rozbieznosci'}
 [open-meteo]  {fmt_source(kety_openmeteo)}
 [yr.no]       {fmt_source(kety_yr)}
 KETY_WARNINGS: {kety_warnings if kety_warnings else 'brak rozbieznosci'}
+
+== KALENDARZ I WAZNE DNI ==
+SPECIAL_DAYS:
+{special_days_str}
+
+CALENDAR_EVENTS:
+{calendar_events}
 
 == SKRZYNKA (ostatnie 3 dni) ==
 {emails}
