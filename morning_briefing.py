@@ -581,6 +581,9 @@ def main():
     special_days = get_polish_special_days(datetime.now(WARSAW_TZ).date())
     special_days_str = fmt_special_days(special_days)
 
+    now_local = datetime.now(WARSAW_TZ)
+    is_weekend = now_local.weekday() >= 5  # 5=sobota, 6=niedziela
+
     print('Pobieram pogode (4 zrodla)...')
     bb_wttr      = fetch_wttr('Bielsko-Biala,Poland', 6, 18)
     bb_openmeteo = fetch_openmeteo(BB_LAT, BB_LON, 7, 18)
@@ -589,22 +592,32 @@ def main():
     bb_warnings  = compare_sources([bb_wttr, bb_openmeteo, bb_yr])
     imgw_alerts  = fetch_imgw_warnings()
 
-    kety_wttr      = fetch_wttr('Kety,Poland', 15, 23)
-    kety_openmeteo = fetch_openmeteo(KETY_LAT, KETY_LON, 16, 23)
-    kety_yr        = fetch_yr(KETY_LAT, KETY_LON, 16, 23)
+    # Kęty: cały dzień w weekend, wieczór w tygodniu
+    kety_h_start = 6  if is_weekend else 16
+    kety_h_end   = 23
+    kety_wttr      = fetch_wttr('Kety,Poland', kety_h_start, kety_h_end)
+    kety_openmeteo = fetch_openmeteo(KETY_LAT, KETY_LON, kety_h_start, kety_h_end)
+    kety_yr        = fetch_yr(KETY_LAT, KETY_LON, kety_h_start, kety_h_end)
     kety_warnings  = compare_sources([kety_wttr, kety_openmeteo, kety_yr])
+    kety_label     = 'cały dzień (06:00-23:00)' if is_weekend else 'dom (16:00-23:00)'
 
     sunrise = bb_wttr.get('sunrise', '?') if bb_wttr else '?'
     sunset  = bb_wttr.get('sunset',  '?') if bb_wttr else '?'
 
     print('Pobieram ruch drogowy...')
-    traffic_kety_bb = fetch_traffic_osrm(KETY_LAT, KETY_LON, BB_LAT, BB_LON)
-    traffic_bb_kety = fetch_traffic_osrm(BB_LAT, BB_LON, KETY_LAT, KETY_LON)
+    if not is_weekend:
+        traffic_kety_bb = fetch_traffic_osrm(KETY_LAT, KETY_LON, BB_LAT, BB_LON)
+        traffic_bb_kety = fetch_traffic_osrm(BB_LAT, BB_LON, KETY_LAT, KETY_LON)
+    else:
+        traffic_kety_bb = None
+        traffic_bb_kety = None
 
     print('Pobieram newsy i gry...')
-    news_world  = fetch_news_rss('world news today', lang='en', country='US')
-    news_poland = fetch_news_rss('Polska wiadomosci dzis')
-    news_local  = fetch_news_rss('Kety Bielsko-Biala')
+    news_world  = fetch_news_rss('high tech AI cybersecurity economy business finance', lang='en', country='US')
+    news_poland = fetch_news_rss('Polska technologia cyberbezpieczenstwo gospodarka biznes finanse')
+    news_bb     = fetch_news_rss('Bielsko-Biała wydarzenia utrudnienia problemy')
+    news_kety   = fetch_news_rss('Kęty Oświęcim wydarzenia utrudnienia')
+    news_alerts = fetch_news_rss('Bielsko-Biała Kęty Oświęcim ostrzeżenie awaria skażenie prąd')
     news_gaming = fetch_news_rss('free games Epic GOG Steam Amazon Prime Gaming', lang='en', country='US')
     epic_games  = fetch_article('https://store.epicgames.com/en-US/free-games')
     gog_free    = fetch_article('https://www.gog.com/en/games?features=free')
@@ -635,7 +648,7 @@ STRUKTURA (w tej kolejnosci):
       Jesli IMGW_ALERTS niepuste: wiersz tlo #ffebee, ikona ⚠️ + tresc alertu
       Jesli BB_WARNINGS niepuste: wiersz tlo #fff3cd, ikona ⚠️ + tresc
 
-   b) Naglowek "Kety — dom (16:00-23:00)", tlo #e8fde8
+   b) Naglowek "Kety — {kety_label}", tlo #e8fde8
       Narracyjne 2-3 zdania
       Jesli KETY_WARNINGS niepuste: wiersz tlo #fff3cd, ikona ⚠️ + tresc
 
@@ -659,12 +672,13 @@ STRUKTURA (w tej kolejnosci):
    Cala sekcja: jezeli jest DZIEN_WOLNY to dodaj subtelny zolty ramki do calej sekcji (border-left: 4px solid #fbc02d)
 
 4. DOJAZD DO PRACY (naglowek tlo #e8eaf6, ikona 🚗 "Dojazd Kęty → Bielsko-Biała"):
-   Trasa: Kęty → Bielsko-Biała (rano, do pracy) i powrót (wieczorem)
-   Czas bazowy bez korkow z OSRM — informuj ze to estymacja bez real-time traffic.
-   Format: 2 wiersze:
-   - 🚗 Rano (Kęty → BB): ok. X min | Y km
-   - 🏠 Wieczorem (BB → Kęty): ok. X min | Y km
-   Jesli brak danych: "Brak danych o trasie"
+   IS_WEEKEND: {'TAK' if is_weekend else 'NIE'}
+   Jesli IS_WEEKEND=TAK: jeden wiersz szary "🏖️ Weekend — brak dojazdu do pracy"
+   Jesli IS_WEEKEND=NIE:
+     Czas bazowy bez korkow z OSRM — informuj ze to estymacja bez real-time traffic.
+     - 🚗 Rano (wyjazd Kęty 7:45): ok. X min | Y km → przyjazd ok. [7:45 + X min]
+     - 🏠 Powrót (wyjazd BB 16:25): ok. X min | Y km → przyjazd ok. [16:25 + X min]
+     Jesli brak danych: "Brak danych o trasie"
 
 5. SKRZYNKA ODBIORCZA (naglowek tlo #fff8e1, ikona 📬):
    Przeanalizuj WSZYSTKIE emaile z sekcji SKRZYNKA i wyswietl TYLKO te, ktore spelniaja co najmniej jeden z kryteriow:
@@ -685,7 +699,14 @@ STRUKTURA (w tej kolejnosci):
    Lista, terminy pogrubione czerwono
 
 7. WIADOMOSCI (naglowek tlo #e8f5e9):
-   Podsekcje: Swiat | Polska | Lokalne. Kazdy temat: tytul + 2 zdania.
+   Podsekcje w tej kolejnosci:
+   a) SWIAT (High Tech / AI, Cyberbezpieczenstwo, Ekonomia & Biznes) — 3-4 najwazniejsze tematy, tytul + 2 zdania
+   b) POLSKA (te same obszary tematyczne) — 3-4 tematy, tytul + 2 zdania
+   c) LOKALNE — Bielsko-Biala i Kety/Oswiecim:
+      - ALERTY KRYTYCZNE (jesli sa): tlo #ffebee, ikona 🔴 — warunki pogodowe, skazenie wody, problemy z prasdem/mediami, katastrofy
+      - Eventy i wydarzenia — co sie dzieje dzisiaj/jutro w okolicy
+      - Utrudnienia i problemy — remonty, korki, zamkniecia
+      Jesli brak lokalnych alertow: jeden wiersz "Brak alertow krytycznych w okolicy ✅"
 
 8. GAMING I DARMOWE GRY (naglowek tlo #fce4ec):
    Darmowe gry: ramka 2px solid #4caf50, pelna informacja (co, gdzie, do kiedy)
@@ -702,7 +723,7 @@ DANE:
 IMGW_ALERTS: {imgw_alerts if imgw_alerts else 'brak'}
 BB_WARNINGS: {bb_warnings if bb_warnings else 'brak rozbieznosci'}
 
-== POGODA KETY (16-23) ==
+== POGODA KETY ({kety_label}) ==
 [wttr.in]     {fmt_source(kety_wttr)}
 [open-meteo]  {fmt_source(kety_openmeteo)}
 [yr.no]       {fmt_source(kety_yr)}
@@ -716,8 +737,11 @@ CALENDAR_EVENTS:
 {calendar_events}
 
 == DOJAZD (OSRM, bez real-time traffic) ==
-Kety -> Bielsko-Biala: {f"{traffic_kety_bb['duration_min']} min | {traffic_kety_bb['distance_km']} km" if traffic_kety_bb else 'BLAD'}
-Bielsko-Biala -> Kety: {f"{traffic_bb_kety['duration_min']} min | {traffic_bb_kety['distance_km']} km" if traffic_bb_kety else 'BLAD'}
+IS_WEEKEND: {'TAK' if is_weekend else 'NIE'}
+Wyjazd rano: Kety 7:45 -> Bielsko-Biala
+Wyjazd popol.: Bielsko-Biala 16:25 -> Kety
+Kety -> Bielsko-Biala: {f"{traffic_kety_bb['duration_min']} min | {traffic_kety_bb['distance_km']} km" if traffic_kety_bb else ('WEEKEND' if is_weekend else 'BLAD')}
+Bielsko-Biala -> Kety: {f"{traffic_bb_kety['duration_min']} min | {traffic_bb_kety['distance_km']} km" if traffic_bb_kety else ('WEEKEND' if is_weekend else 'BLAD')}
 
 == SKRZYNKA (ostatnie 3 dni, tylko inbox) ==
 {emails}
@@ -725,14 +749,21 @@ Bielsko-Biala -> Kety: {f"{traffic_bb_kety['duration_min']} min | {traffic_bb_ke
 == ZADANIA TO DO ==
 {todo}
 
-== WIADOMOSCI SWIATOWE ==
-{news_world}
+== WIADOMOSCI SWIAT (High Tech / AI / Cybersec / Economy / Business) ==
+{news_world[:3000]}
 
-== WIADOMOSCI POLSKA ==
-{news_poland}
+== WIADOMOSCI POLSKA (High Tech / Cybersec / Gospodarka / Biznes) ==
+{news_poland[:3000]}
 
-== WIADOMOSCI LOKALNE ==
-{news_local[:2000]}
+== WIADOMOSCI LOKALNE BIELSKO-BIALA ==
+{news_bb[:2000]}
+
+== WIADOMOSCI LOKALNE KETY/OSWIECIM ==
+{news_kety[:1500]}
+
+== ALERTY KRYTYCZNE LOKALNIE (pogoda/skazenie/awaria/katastrofa) ==
+IMGW_ALERTS: {imgw_alerts if imgw_alerts else 'brak'}
+{news_alerts[:1500]}
 
 == GAMING / DARMOWE GRY ==
 {news_gaming}
