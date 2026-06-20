@@ -667,9 +667,9 @@ def main():
     poland_tvn24     = fetch_rss_items('https://tvn24.pl/najwazniejsze.xml', max_items=4)
     rcb_alerts       = fetch_rss_items('https://www.rcb.gov.pl/feed/', max_items=5)
     news_alerts_kety = fetch_news_rss('Kęty Oświęcim straż pożarna policja sanepid ostrzeżenie awaria skażenie')
-    kety_kety_pl     = fetch_article('https://kety.pl/aktualnosci/')[:2500]
-    kety_mamnewsa    = fetch_article('https://www.mamnewsa.pl/wiadomosci')[:2500]
-    kety_24kety      = fetch_article('https://24kety.pl/')[:2500]
+    kety_kety_pl     = fetch_rss_items('https://kety.pl/rss/aktualnosci.xml', max_items=10)
+    kety_mamnewsa    = fetch_news_rss('site:mamnewsa.pl', max_items=10)
+    kety_24kety      = fetch_rss_items('https://24kety.pl/feed/', max_items=10)
     gaming_gryonline = fetch_rss_items('https://www.gry-online.pl/rss/news.xml', max_items=5)
     gaming_lowcygier = fetch_rss_items('https://lowcygier.pl/feed/', max_items=5)
     epic_games       = fetch_article('https://store.epicgames.com/en-US/free-games')
@@ -857,14 +857,14 @@ Bielsko-Biala -> Kety: {f"{traffic_bb_kety['duration_min']} min | {traffic_bb_ke
 {fmt_rss_items(poland_tvn24)}
 
 == WIADOMOSCI LOKALNE KETY/OSWIECIM ==
-[kety.pl/aktualnosci]
-{kety_kety_pl}
+[kety.pl/rss]
+{fmt_rss_items(kety_kety_pl)}
 
-[mamnewsa.pl/wiadomosci]
-{kety_mamnewsa}
+[mamnewsa.pl via Google News]
+{fmt_rss_items(kety_mamnewsa)}
 
-[24kety.pl]
-{kety_24kety}
+[24kety.pl/feed]
+{fmt_rss_items(kety_24kety)}
 
 == GAMING — GRY-ONLINE.PL ==
 {fmt_rss_items(gaming_gryonline)}
