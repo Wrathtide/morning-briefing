@@ -569,7 +569,7 @@ def fmt_rss_items(items):
 def call_claude(prompt):
     data = json.dumps({
         'model': 'claude-sonnet-4-6',
-        'max_tokens': 16000,
+        'max_tokens': 8192,
         'messages': [{'role': 'user', 'content': prompt}],
     }).encode('utf-8')
     req = urllib.request.Request(
@@ -888,6 +888,8 @@ Bielsko-Biala -> Kety: {f"{traffic_bb_kety['duration_min']} min | {traffic_bb_ke
 Zacznij od <!DOCTYPE html><html><body> i skoncz </body></html>.
 Caly email: jedna zewnetrzna tabela width="600" align="center" style="background:#ffffff;border:1px solid #e0e0e0;font-family:Arial,sans-serif;font-size:14px".
 Kazda sekcja: osobna tabela wewnatrz, width="100%", padding 16px.
+PRIORYTET: kompletny zamkniety HTML > liczba artykulow. Jesli zbliżasz sie do limitu miejsca,
+skróc streszczenia lub pomiń ostatnie artykuły w sekcji, ale ZAWSZE zakoncz </body></html>.
 """
 
     print('Generuje raport przez Claude Sonnet...')
