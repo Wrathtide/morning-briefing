@@ -661,14 +661,15 @@ def main():
         traffic_bb_kety = None
 
     print('Pobieram newsy...')
-    world_ars        = fetch_rss_items('https://feeds.arstechnica.com/arstechnica/index', max_items=4)
-    world_bbc        = fetch_rss_items('https://feeds.bbci.co.uk/news/technology/rss.xml', max_items=4)
-    poland_oko       = fetch_rss_items('https://oko.press/feed/', max_items=5)
-    news_bb          = fetch_news_rss('Bielsko-Biała wydarzenia utrudnienia problemy')
+    world_tvn24      = fetch_rss_items('https://tvn24.pl/swiat.xml', max_items=5)
+    world_gnews      = fetch_news_rss('world economy technology AI cybersecurity politics', lang='en', country='US')
+    poland_oko       = fetch_rss_items('https://oko.press/feed/', max_items=4)
+    poland_tvn24     = fetch_rss_items('https://tvn24.pl/najwazniejsze.xml', max_items=4)
+    rcb_alerts       = fetch_rss_items('https://www.rcb.gov.pl/feed/', max_items=5)
+    news_alerts_kety = fetch_news_rss('Kęty Oświęcim straż pożarna policja sanepid ostrzeżenie awaria skażenie')
     kety_kety_pl     = fetch_article('https://kety.pl/aktualnosci/')[:2500]
     kety_mamnewsa    = fetch_article('https://www.mamnewsa.pl/wiadomosci')[:2500]
     kety_24kety      = fetch_article('https://24kety.pl/')[:2500]
-    news_alerts      = fetch_news_rss('Bielsko-Biała Kęty Oświęcim ostrzeżenie awaria skażenie prąd')
     gaming_gryonline = fetch_rss_items('https://www.gry-online.pl/rss/news.xml', max_items=5)
     gaming_lowcygier = fetch_rss_items('https://lowcygier.pl/feed/', max_items=5)
     epic_games       = fetch_article('https://store.epicgames.com/en-US/free-games')
@@ -755,7 +756,21 @@ STRUKTURA (w tej kolejnosci):
      - 🏠 Powrót (wyjazd BB 16:25): ok. X min | Y km → przyjazd ok. [oblicz]
      Jesli brak danych: "Brak danych o trasie"
 
-5. SKRZYNKA ODBIORCZA (naglowek tlo #fff8e1, ikona 📬):
+5. ALERTY KRYTYCZNE — KETY I OKOLICE (naglowek tlo #ffebee, ikona 🚨 "Alerty i Ostrzeżenia"):
+   Pokazuj sekcje ZAWSZE. Jesli brak alertow: zielony wiersz "✅ Brak aktywnych alertów".
+   Zrodla: IMGW, RCB, lokalne sluby Kety (dane z sekcji ALERTY w danych).
+   Kategorie alertow do pokazania (TYLKO te):
+   🌩️ Pogoda — silny wiatr, burze, oblodzenie, upaly, intensywne opady (IMGW)
+   🔴 RCB — oficjalne alerty rzadowe (Alert RCB SMS)
+   💧 Skazenie wody pitnej
+   🍽️ Zagrozenia zywnosciowe / sanepid
+   🏥 Alerty zdrowotne, epidemiczne
+   🚒 PSP Kety — pozary, zdarzenia niebezpieczne w okolicy
+   👮 Policja Kety — zagrozenia bezpieczenstwa, poszukiwania, akcje
+   Format: kazdy alert w osobnym wierszu tlo #ffe0e0, ikona tematyczna + opis + zrodlo.
+   POMIŃ: ogolna polityka, gospodarka, sport, kultura bez bezposredniego zagrozenia.
+
+6. SKRZYNKA ODBIORCZA (naglowek tlo #fff8e1, ikona 📬):
    Wyswietl TYLKO emaile spelniajace co najmniej jeden z kryteriow:
    a) Wymagaja reakcji uzytkownika w ciagu 3 dni (odpowiedz, potwierdzenie, platnosc, decyzja, termin)
    b) Alert bezpieczenstwa (weryfikacja logowania, zmiana hasla, podejrzana aktywnosc, phishing, 2FA)
@@ -764,26 +779,22 @@ STRUKTURA (w tej kolejnosci):
    Obramowanie 1px solid #fbc02d jesli deadline 2-3 dni.
    Jesli zadna nie kwalifikuje sie: "Brak pilnych wiadomosci — skrzynka spokojna ✅"
 
-6. ZADANIA TO DO (naglowek tlo #f3e5f5):
+7. ZADANIA TO DO (naglowek tlo #f3e5f5):
    Lista, terminy pogrubione czerwono
 
-7. WIADOMOSCI (naglowek tlo #e8f5e9):
+8. WIADOMOSCI (naglowek tlo #e8f5e9):
    WAZNE: dla kazdego newsa z linkiem — tytuł jako <a href="URL" style="color:#1a73e8;text-decoration:none">Tytuł</a>
    Podsekcje:
-   a) SWIAT — High Tech / AI / Cyberbezpieczenstwo / Ekonomia & Biznes:
-      Zrodla: Ars Technica + BBC Tech. 4-6 najwazniejszych. Kazdy: tytuł-link + 2 zdania po polsku.
+   a) SWIAT — polityka, gospodarka, tech/AI, cyberbezpieczenstwo:
+      Zrodla: TVN24 Swiat + Google News World. 4-6 najwazniejszych. Kazdy: tytuł-link + 2 zdania po polsku.
    b) POLSKA (te same obszary):
-      Zrodlo: OKO.press. 3-5 artykulow z linkami + 2 zdania po polsku.
-   c) LOKALNE — Bielsko-Biala:
-      - ALERTY KRYTYCZNE (jesli sa): tlo #ffebee, ikona 🔴 — warunki pogodowe, skazenie, awarie
-      - Eventy i wydarzenia, utrudnienia i problemy
-      Jesli brak alertow: "Brak alertow krytycznych ✅"
-   d) LOKALNE — Kety i okolice (dane z portali kety.pl, mamnewsa.pl, 24kety.pl):
-      FILTRUJ: pokaz TYLKO wydarzenia, eventy, zagrozenia, ogolne wiadomosci z okolicy
+      Zrodla: OKO.press + TVN24 Najwazniejsze. 4-6 artykulow z linkami + 2 zdania po polsku.
+   c) LOKALNE — Kety i okolice (portale: kety.pl, mamnewsa.pl, 24kety.pl):
+      FILTRUJ: pokaz TYLKO wydarzenia, eventy, ogolne wiadomosci z okolicy
       POMIŃ bez wyjatku: sport, tresci rodzinne, tresci dla dzieci
-      3-5 najwazniejszych newsow, tytul jako <a href="URL" style="color:#1a73e8;text-decoration:none">Tytuł</a> + 1 zdanie opisu
+      Az do 10 newsow, tytul jako <a href="URL" style="color:#1a73e8;text-decoration:none">Tytuł</a> + 1 zdanie opisu
 
-8. GAMING I DARMOWE GRY (naglowek tlo #fce4ec):
+9. GAMING I DARMOWE GRY (naglowek tlo #fce4ec):
    a) DARMOWE GRY (ramka 2px solid #4caf50, tlo #f1f8e9, NA GORZE!):
       Z danych EPIC i GOG wyodrebnij konkretne gry. Kazda: nazwa jako <a href="URL">Gra</a>.
       Podaj termin jesli widoczny. Jesli brak konkretnych gier: "Brak darmowych gier w tej chwili"
@@ -824,17 +835,26 @@ Bielsko-Biala -> Kety: {f"{traffic_bb_kety['duration_min']} min | {traffic_bb_ke
 == ZADANIA TO DO ==
 {todo}
 
-== WIADOMOSCI SWIAT — Ars Technica ==
-{fmt_rss_items(world_ars)}
+== ALERTY KRYTYCZNE — IMGW ==
+{imgw_alerts if imgw_alerts else 'brak'}
 
-== WIADOMOSCI SWIAT — BBC Technology ==
-{fmt_rss_items(world_bbc)}
+== ALERTY KRYTYCZNE — RCB ==
+{fmt_rss_items(rcb_alerts)}
+
+== ALERTY LOKALNE — KETY/OSWIECIM (Google News) ==
+{fmt_rss_items(news_alerts_kety)}
+
+== WIADOMOSCI SWIAT — TVN24 ==
+{fmt_rss_items(world_tvn24)}
+
+== WIADOMOSCI SWIAT — Google News World ==
+{fmt_rss_items(world_gnews)}
 
 == WIADOMOSCI POLSKA — OKO.press ==
 {fmt_rss_items(poland_oko)}
 
-== WIADOMOSCI LOKALNE BIELSKO-BIALA ==
-{news_bb[:2000]}
+== WIADOMOSCI POLSKA — TVN24 ==
+{fmt_rss_items(poland_tvn24)}
 
 == WIADOMOSCI LOKALNE KETY/OSWIECIM ==
 [kety.pl/aktualnosci]
@@ -845,10 +865,6 @@ Bielsko-Biala -> Kety: {f"{traffic_bb_kety['duration_min']} min | {traffic_bb_ke
 
 [24kety.pl]
 {kety_24kety}
-
-== ALERTY KRYTYCZNE LOKALNIE (pogoda/skazenie/awaria/katastrofa) ==
-IMGW_ALERTS: {imgw_alerts if imgw_alerts else 'brak'}
-{news_alerts[:1500]}
 
 == GAMING — GRY-ONLINE.PL ==
 {fmt_rss_items(gaming_gryonline)}
