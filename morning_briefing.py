@@ -569,7 +569,7 @@ def fmt_rss_items(items):
 def call_claude(prompt):
     data = json.dumps({
         'model': 'claude-sonnet-4-6',
-        'max_tokens': 8192,
+        'max_tokens': 16000,
         'messages': [{'role': 'user', 'content': prompt}],
     }).encode('utf-8')
     req = urllib.request.Request(
@@ -767,7 +767,8 @@ STRUKTURA (w tej kolejnosci):
    🏥 Alerty zdrowotne, epidemiczne
    🚒 PSP Kety — pozary, zdarzenia niebezpieczne w okolicy
    👮 Policja Kety — zagrozenia bezpieczenstwa, poszukiwania, akcje
-   Format: kazdy alert w osobnym wierszu tlo #ffe0e0, ikona tematyczna + opis + zrodlo.
+   Format: kazdy alert w osobnym wierszu tlo #ffe0e0, ikona tematyczna + opis + zrodlo jako klikalne
+   <a href="URL">krotka_nazwa</a> (np. "IMGW", "RCB", "mamnewsa.pl") — NIE pokazuj pelnego URL w tresci.
    POMIŃ: ogolna polityka, gospodarka, sport, kultura bez bezposredniego zagrozenia.
 
 6. SKRZYNKA ODBIORCZA (naglowek tlo #fff8e1, ikona 📬):
@@ -791,9 +792,9 @@ STRUKTURA (w tej kolejnosci):
       atak jednego panstwa na drugie, atak na Polske, seryjny morderca w kraju/za granica,
       katastrofa naturalna, masowe zdarzenie z ofiarami, wybuch) — rozszerz do max 15 w tej podsekcji.
    a) SWIAT — polityka, gospodarka, tech/AI, cyberbezpieczenstwo:
-      Zrodla: TVN24 Swiat + Google News World. Kazdy: tytuł-link + 2 zdania po polsku.
+      Zrodla: TVN24 Swiat + Google News World. Kazdy: tytuł-link + 1 zdanie po polsku.
    b) POLSKA (te same obszary):
-      Zrodla: OKO.press + TVN24 Najwazniejsze. Kazdy: tytuł-link + 2 zdania po polsku.
+      Zrodla: OKO.press + TVN24 Najwazniejsze. Kazdy: tytuł-link + 1 zdanie po polsku.
    c) LOKALNE — Kety i okolice (portale: kety.pl, mamnewsa.pl, 24kety.pl):
       FILTRUJ: pokaz TYLKO wydarzenia, eventy, ogolne wiadomosci z okolicy
       POMIŃ bez wyjatku: sport, tresci rodzinne, tresci dla dzieci
