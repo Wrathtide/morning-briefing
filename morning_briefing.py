@@ -737,12 +737,16 @@ def select_watched_games_updates(items):
         'Uwzględniaj: patche, DLC, eventy, darmowe przedmioty, zapowiedzi, bety, '
         'aktualizacje, nowe gry z serii, zamknięcia studiów. Pomiń niezwiązane z tymi grami.\n\n'
         'Format — artykuły pogrupowane po grach:\n'
-        '=== Nazwa gry ===\n'
+        '=== Ogólne ===\n'
+        '(tu: wyprzedaże/bundle/rankingi/eventy dotyczące WIELU gier naraz)\n'
+        'N. Jedno zdanie po polsku.\n\n'
+        '=== Nazwa konkretnej gry ===\n'
         'N. Jedno zdanie po polsku (co nowego/co się zmieniło).\n'
-        '  Jeśli artykuł dotyczy patcha/aktualizacji — dodaj konkretne zmiany:\n'
+        '  Jeśli patch/aktualizacja — dodaj konkretne zmiany:\n'
         '  • Zmiana 1 (np. "Dodano zimowe mapy Namalsk")\n'
         '  • Zmiana 2 (np. "Poprawiono synchronizację ekwipunku")\n'
-        '  Jeśli NIE jest to patch — tylko zdanie, BEZ punktów.\n\n'
+        '  Jeśli NIE patch — tylko zdanie, BEZ punktów.\n\n'
+        'WAŻNE: każdy artykuł trafia do JEDNEJ sekcji — albo Ogólne, albo konkretna gra.\n\n'
         'Artykuły:\n' + '\n'.join(lines)
     )
     result = call_claude(prompt, max_tokens=3000, timeout=90)
@@ -790,14 +794,8 @@ def build_watched_html(grouped):
             '</table>'
         )
 
-    rows = []
-    for game_name, articles in grouped.items():
-        if not articles:
-            continue
-        rows.append(
-            f'<p style="margin:10px 0 2px 0;font-weight:bold;font-size:14px;color:#6a1b9a">'
-            f'🎮 {game_name}</p>'
-        )
+    def _render_articles(articles, indent='16px'):
+        parts = []
         for art in articles:
             item = art['item']
             link = item.get('link', '')
@@ -806,17 +804,35 @@ def build_watched_html(grouped):
                 f'<a href="{link}" style="color:#1a73e8;text-decoration:none">{title}</a>'
                 if link else title
             )
-            article_html = (
-                f'<p style="margin:2px 0 2px 16px;padding:4px 0;border-bottom:1px solid #f0f0f0">'
+            html = (
+                f'<p style="margin:2px 0 2px {indent};padding:4px 0;border-bottom:1px solid #f0f0f0">'
                 f'◆ {title_html}<br>'
                 f'<span style="color:#555;font-size:13px">{art["summary"]}</span>'
             )
             for b in art['bullets']:
-                article_html += (
-                    f'<br><span style="color:#555;font-size:13px;margin-left:12px">• {b}</span>'
-                )
-            article_html += '</p>'
-            rows.append(article_html)
+                html += f'<br><span style="color:#555;font-size:13px;margin-left:12px">• {b}</span>'
+            html += '</p>'
+            parts.append(html)
+        return '\n'.join(parts)
+
+    rows = []
+
+    # Ogólne — na górze z wyróżnionym stylem
+    if 'Ogólne' in grouped and grouped['Ogólne']:
+        rows.append(
+            '<p style="margin:6px 0 2px 0;font-weight:bold;font-size:14px;color:#37474f">'
+            '📢 Ogólne (wiele gier)</p>'
+        )
+        rows.append(_render_articles(grouped['Ogólne']))
+
+    for game_name, articles in grouped.items():
+        if game_name == 'Ogólne' or not articles:
+            continue
+        rows.append(
+            f'<p style="margin:10px 0 2px 0;font-weight:bold;font-size:14px;color:#6a1b9a">'
+            f'🎮 {game_name}</p>'
+        )
+        rows.append(_render_articles(articles))
 
     inner = '\n'.join(rows)
     return (
