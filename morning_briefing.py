@@ -665,7 +665,9 @@ def main():
     world_bbc        = fetch_rss_items('https://feeds.bbci.co.uk/news/technology/rss.xml', max_items=4)
     poland_oko       = fetch_rss_items('https://oko.press/feed/', max_items=5)
     news_bb          = fetch_news_rss('Bielsko-Biała wydarzenia utrudnienia problemy')
-    news_kety        = fetch_news_rss('Kęty Oświęcim wydarzenia utrudnienia')
+    kety_kety_pl     = fetch_article('https://kety.pl/aktualnosci/')[:2500]
+    kety_mamnewsa    = fetch_article('https://www.mamnewsa.pl/wiadomosci')[:2500]
+    kety_24kety      = fetch_article('https://24kety.pl/')[:2500]
     news_alerts      = fetch_news_rss('Bielsko-Biała Kęty Oświęcim ostrzeżenie awaria skażenie prąd')
     gaming_gryonline = fetch_rss_items('https://www.gry-online.pl/rss/news.xml', max_items=5)
     gaming_lowcygier = fetch_rss_items('https://lowcygier.pl/feed/', max_items=5)
@@ -772,10 +774,14 @@ STRUKTURA (w tej kolejnosci):
       Zrodla: Ars Technica + BBC Tech. 4-6 najwazniejszych. Kazdy: tytuł-link + 2 zdania po polsku.
    b) POLSKA (te same obszary):
       Zrodlo: OKO.press. 3-5 artykulow z linkami + 2 zdania po polsku.
-   c) LOKALNE — Bielsko-Biala i Kety/Oswiecim:
+   c) LOKALNE — Bielsko-Biala:
       - ALERTY KRYTYCZNE (jesli sa): tlo #ffebee, ikona 🔴 — warunki pogodowe, skazenie, awarie
       - Eventy i wydarzenia, utrudnienia i problemy
       Jesli brak alertow: "Brak alertow krytycznych ✅"
+   d) LOKALNE — Kety i okolice (dane z portali kety.pl, mamnewsa.pl, 24kety.pl):
+      FILTRUJ: pokaz TYLKO wydarzenia, eventy, zagrozenia, ogolne wiadomosci z okolicy
+      POMIŃ bez wyjatku: sport, tresci rodzinne, tresci dla dzieci
+      3-5 najwazniejszych newsow, tytul jako <a href="URL" style="color:#1a73e8;text-decoration:none">Tytuł</a> + 1 zdanie opisu
 
 8. GAMING I DARMOWE GRY (naglowek tlo #fce4ec):
    a) DARMOWE GRY (ramka 2px solid #4caf50, tlo #f1f8e9, NA GORZE!):
@@ -831,7 +837,14 @@ Bielsko-Biala -> Kety: {f"{traffic_bb_kety['duration_min']} min | {traffic_bb_ke
 {news_bb[:2000]}
 
 == WIADOMOSCI LOKALNE KETY/OSWIECIM ==
-{news_kety[:1500]}
+[kety.pl/aktualnosci]
+{kety_kety_pl}
+
+[mamnewsa.pl/wiadomosci]
+{kety_mamnewsa}
+
+[24kety.pl]
+{kety_24kety}
 
 == ALERTY KRYTYCZNE LOKALNIE (pogoda/skazenie/awaria/katastrofa) ==
 IMGW_ALERTS: {imgw_alerts if imgw_alerts else 'brak'}
