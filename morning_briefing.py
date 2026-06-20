@@ -425,25 +425,62 @@ def fetch_imgw_synop(station_keyword):
 
 
 def fetch_imgw_warnings():
-    data = fetch_json('https://danepubliczne.imgw.pl/api/data/warnings')
-    if not data:
+    data = fetch_json('https://danepubliczne.imgw.pl/api/data/warningsmeteo')
+    if not isinstance(data, list):
         return ''
     try:
-        relevant = ['śląskie', 'slaskie', 'małopolskie', 'malopolskie',
-                    'slask', 'malopolska', 'silesia']
-        items = data if isinstance(data, list) else []
-        warnings = []
-        for w in items:
-            region = str(w.get('obszar', '') or w.get('region', '') or '').lower()
-            if any(v in region for v in relevant):
-                level = w.get('stopien') or w.get('level', '?')
-                phenomenon = w.get('zjawisko') or w.get('phenomenon', '?')
-                time_range = (w.get('czas_od_do')
-                              or f"{w.get('od', '')} - {w.get('do', '')}")
-                warnings.append(f"STOPIEN {level}: {phenomenon} ({time_range})")
-        return '\n'.join(warnings)
+        lines = []
+        for w in data:
+            zjawisko = w.get('nazwa_zdarzenia', '?')
+            stopien  = w.get('stopien', '?')
+            prob     = w.get('prawdopodobienstwo', '')
+            od       = w.get('obowiazuje_od', '')[:16]
+            do       = w.get('obowiazuje_do', '')[:16]
+            tresc    = w.get('tresc', '')[:200]
+            lines.append(f"STOPIEŃ {stopien}: {zjawisko} (prawdop.{prob}%, {od}–{do}) | {tresc}")
+        return '\n'.join(lines)
     except Exception:
         return ''
+
+
+def fetch_epic_free():
+    url = ('https://store-site-backend-static-ipv4.ak.epicgames.com/'
+           'freeGamesPromotions?locale=pl&country=PL&allowCountries=PL')
+    data = fetch_json(url)
+    games = (data or {}).get('data', {}).get('Catalog', {}).get('searchStore', {}).get('elements', [])
+    free = []
+    for g in games:
+        promo = g.get('promotions') or {}
+        for block in promo.get('promotionalOffers', []):
+            if not isinstance(block, dict):
+                continue
+            for offer in block.get('promotionalOffers', []):
+                if offer.get('discountSetting', {}).get('discountPercentage', -1) == 0:
+                    mappings = (g.get('catalogNs') or {}).get('mappings') or [{}]
+                    slug = (mappings[0] or {}).get('pageSlug', '')
+                    link = (f'https://store.epicgames.com/pl/p/{slug}'
+                            if slug else 'https://store.epicgames.com/pl/free-games')
+                    end = offer.get('endDate', '')[:10]
+                    free.append({'title': g.get('title', '?'), 'link': link, 'end': end})
+    return free
+
+
+def fetch_gog_free():
+    url = ('https://catalog.gog.com/v1/catalog?limit=20&price=between:0,0'
+           '&order=trending-desc&productType=in:game')
+    data = fetch_json(url)
+    products = (data or {}).get('products', [])
+    result = []
+    for p in products:
+        title = p.get('title', '')
+        if 'demo' in title.lower() or 'demo' in p.get('slug', ''):
+            continue
+        slug = p.get('slug', '')
+        link = f'https://www.gog.com/game/{slug}' if slug else 'https://www.gog.com'
+        result.append({'title': title, 'link': link})
+        if len(result) >= 8:
+            break
+    return result
 
 
 # ── Porownanie zrodel ─────────────────────────────────────────────────────────
@@ -562,6 +599,193 @@ def fmt_rss_items(items):
         desc_part = f' — {it["desc"][:200]}' if it.get('desc') else ''
         lines.append(f'• {it["title"]}{link_part}{desc_part}')
     return '\n'.join(lines)
+
+
+# ── Gaming watchlist ──────────────────────────────────────────────────────────
+
+WATCHED_GAMES = [
+    ('Starfield', 'Bethesda Game Studios', 'RPG open world sci-fi'),
+    ('Star Citizen', 'Cloud Imperium Games', 'space sim MMO'),
+    ('Elite Dangerous', 'Frontier Developments', 'space sim open world'),
+    ('ARMA series', 'Bohemia Interactive', 'mil-sim tactical'),
+    ('DayZ', 'Bohemia Interactive', 'survival open world'),
+    ('Diablo 4', 'Blizzard Entertainment', 'action RPG'),
+    ('Enshrouded', 'Keen Games', 'survival RPG open world'),
+    ('Escape from Tarkov', 'Battlestate Games', 'extraction FPS survival'),
+    ('Forza Horizon 6', 'Playground Games', 'racing open world'),
+    ('Need for Speed series', 'EA/Criterion', 'racing'),
+    ('Stoneshard', 'Ink Stains Games', 'RPG roguelike'),
+    ('Wartales', 'Shiro Games', 'tactical RPG open world'),
+    ('Age of Wonders 4', 'Triumph Studios', '4X strategy'),
+    ('Kingdom Come Deliverance series', 'Warhorse Studios', 'RPG open world'),
+    ('Heroes of Might and Magic 3/7/8', 'Ubisoft/community', 'turn-based strategy'),
+    ('The Elder Scrolls 7', 'Bethesda Game Studios', 'RPG open world'),
+    ("Assassin's Creed series", 'Ubisoft', 'action adventure open world'),
+    ('Cyberpunk 2077 series', 'CD Projekt Red', 'RPG open world cyberpunk'),
+    ('Days Gone series', 'Sony Bend Studio', 'action survival open world'),
+    ('Fallout series', 'Bethesda/Obsidian', 'RPG open world post-apo'),
+    ('GTA series', 'Rockstar Games', 'action open world'),
+    ('Humankind', 'Amplitude Studios', '4X strategy'),
+    ('Stellaris', 'Paradox Interactive', '4X grand strategy sci-fi'),
+    ('Mafia series', 'Hangar 13/2K', 'action open world crime'),
+    ('SnowRunner series', 'Saber Interactive', 'off-road simulation'),
+    ('Outward', 'Nine Dots Studio', 'RPG survival co-op'),
+    ("No Man's Sky", 'Hello Games', 'space exploration survival'),
+    ('RAGE series', 'id Software', 'FPS open world post-apo'),
+    ('Ready or Not', 'VOID Interactive', 'tactical FPS'),
+    ('Tomb Raider series', 'Crystal Dynamics', 'action adventure'),
+    ('Civilization series', 'Firaxis Games', '4X turn-based strategy'),
+    ('Sniper Elite series', 'Rebellion', 'tactical FPS stealth'),
+    ('Space Engineers series', 'Keen Software House', 'sandbox engineering'),
+    ('State of Decay series', 'Undead Labs', 'survival open world zombie'),
+    ('The Forest / Sons of the Forest', 'Endnight Games', 'survival horror'),
+    ('The Long Dark', 'Hinterland Studio', 'survival'),
+    ('The Precinct', 'Fallen Tree Games', 'action open world'),
+    ('Wiedźmin / Witcher series', 'CD Projekt Red', 'RPG open world fantasy'),
+    ('Zero Sievert', 'CABO Studio', 'extraction shooter'),
+    ('Doom series', 'id Software', 'FPS'),
+    ('Dying Light series', 'Techland', 'action survival open world'),
+    ('Jagged Alliance series', 'Haemimont/THQ Nordic', 'tactical RPG'),
+    ('Red Dead Redemption series', 'Rockstar Games', 'action open world western'),
+    ('Ghost Recon series', 'Ubisoft', 'tactical FPS open world'),
+    ('Far Cry series', 'Ubisoft', 'FPS open world'),
+    ('The Division series', 'Ubisoft Massive', 'online RPG shooter'),
+    ('The Crew series', 'Ivory Tower/Ubisoft', 'racing open world'),
+    ('Manor Lords', 'Slavic Magic', 'city builder medieval strategy'),
+    ('Mad Max', 'Avalanche Studios', 'action open world post-apo'),
+    ('Medieval Dynasty / Sengoku Dynasty', 'Render Cube', 'survival RPG'),
+    ('Northgard', 'Shiro Games', 'RTS strategy Norse'),
+    ('Gothic Remake / Risen series', 'Alkimia Interactive', 'RPG open world'),
+    ('Stalker 2 / Stalker series', 'GSC Game World', 'FPS survival open world'),
+    ('Wasteland series', 'inXile Entertainment', 'RPG post-apo'),
+]
+
+_GAME_QUERY_1 = (
+    'Starfield OR "Star Citizen" OR "Elite Dangerous" OR DayZ OR Enshrouded '
+    'OR "Escape from Tarkov" OR Stoneshard OR Wartales OR "Kingdom Come" '
+    'OR "Cyberpunk 2077" OR "Days Gone" OR Stalker2 OR "Manor Lords"'
+)
+_GAME_QUERY_2 = (
+    '"Assassin\'s Creed" OR Witcher OR Wiedźmin OR Fallout OR GTA OR Stellaris '
+    'OR "Dying Light" OR "Ghost Recon" OR "Far Cry" OR "The Division" OR Northgard '
+    'OR "Medieval Dynasty" OR "Space Engineers" OR SnowRunner OR "No Man\'s Sky"'
+)
+_GAME_QUERY_3 = (
+    'ARMA OR "Diablo 4" OR "Age of Wonders" OR "Heroes of Might" OR "Elder Scrolls" '
+    'OR "Red Dead Redemption" OR "Tomb Raider" OR Civilization OR "Ready or Not" '
+    'OR "Doom Eternal" OR "Jagged Alliance" OR "State of Decay" OR "The Crew" '
+    'OR Humankind OR Mafia OR Wasteland OR Northgard OR "Gothic Remake"'
+)
+
+
+def fetch_watched_games_news():
+    """Pobiera newsy o obserwowanych grach z Google News (3 zapytania)."""
+    items = []
+    for q in [_GAME_QUERY_1, _GAME_QUERY_2, _GAME_QUERY_3]:
+        items += fetch_news_rss(q, max_items=15)
+    seen = set()
+    unique = []
+    for it in items:
+        key = it['title'][:60]
+        if key not in seen:
+            seen.add(key)
+            unique.append(it)
+    return unique
+
+
+def select_and_summarize_gaming(gaming_items):
+    """Claude wybiera 15 najlepszych newsów gamingowych i pisze streszczenia."""
+    if not gaming_items:
+        return []
+    lines = []
+    for i, it in enumerate(gaming_items):
+        lines.append(f'{i+1}. {it["title"]}')
+
+    prompt = (
+        'Jesteś redaktorem serwisu gamingowego. Przejrzyj poniższe artykuły i wybierz '
+        'DOKŁADNIE 15 (lub wszystkie jeśli jest mniej) najciekawszych dla gracza PC.\n'
+        'Priorytet: nowe gry/zapowiedzi, DLC, patche, eventy, duże aktualizacje, recenzje.\n'
+        'Pomiń: clickbait, powtórzenia tego samego tematu (zostaw najlepszy), plotki bez źródła.\n\n'
+        'Format (zachowaj oryginalny numer + 1 zdanie streszczenie po polsku max 15 słów):\n'
+        '3. Zdanie streszczające.\n'
+        '7. Zdanie streszczające.\n\n'
+        'Artykuły:\n' + '\n'.join(lines)
+    )
+    result = call_claude(prompt, max_tokens=2000, timeout=90)
+
+    selected = []
+    for line in result.split('\n'):
+        m = re.match(r'^(\d+)\.\s+(.+)', line.strip())
+        if m:
+            idx = int(m.group(1)) - 1
+            summary = m.group(2).strip()
+            if 0 <= idx < len(gaming_items):
+                selected.append((gaming_items[idx], summary))
+    return selected
+
+
+def select_watched_games_updates(items):
+    """Claude filtruje newsy o obserwowanych grach — bez limitu, wszystko istotne."""
+    if not items:
+        return []
+    game_names = ', '.join(g[0] for g in WATCHED_GAMES)
+    lines = [f'{i+1}. {it["title"]}' for i, it in enumerate(items)]
+
+    prompt = (
+        'Filtruj poniższe newsy. Zostaw TYLKO te które dotyczą co najmniej jednej z gier:\n'
+        f'{game_names}\n\n'
+        'Uwzględniaj: patche, DLC, eventy w grze, darmowe przedmioty, zapowiedzi, bety, '
+        'duże aktualizacje, nowe gry z serii, zamknięcia/bankructwa studiów.\n'
+        'Pomiń: ogólne newsy gamingowe niezwiązane z tymi grami.\n\n'
+        'Dla każdego wybranego artykułu podaj ORYGINALNY numer i 1 zdanie po polsku '
+        'zaczynające się od nazwy gry której dotyczy, np.:\n'
+        '5. DayZ: nowy patch 1.27 dodaje zimowe mapy.\n\n'
+        'Artykuły:\n' + '\n'.join(lines)
+    )
+    result = call_claude(prompt, max_tokens=2000, timeout=90)
+
+    selected = []
+    for line in result.split('\n'):
+        m = re.match(r'^(\d+)\.\s+(.+)', line.strip())
+        if m:
+            idx = int(m.group(1)) - 1
+            summary = m.group(2).strip()
+            if 0 <= idx < len(items):
+                selected.append((items[idx], summary))
+    return selected
+
+
+def build_free_games_html(epic_items, gog_items):
+    """Buduje HTML sekcji darmowych gier."""
+    rows = []
+    if epic_items:
+        rows.append('<b style="color:#2e7d32">Epic Games Store:</b>')
+        for g in epic_items:
+            end_txt = f' <span style="color:#888;font-size:12px">(do {g["end"]})</span>' if g.get('end') else ''
+            rows.append(
+                f'<p style="margin:3px 0">🎮 <a href="{g["link"]}" '
+                f'style="color:#1a73e8;text-decoration:none;font-weight:bold">{g["title"]}</a>{end_txt}</p>'
+            )
+    else:
+        rows.append('<p style="color:#888">Epic: brak darmowych gier w tym tygodniu</p>')
+
+    if gog_items:
+        rows.append('<b style="color:#2e7d32;display:block;margin-top:8px">GOG — stale bezpłatne:</b>')
+        for g in gog_items:
+            rows.append(
+                f'<p style="margin:3px 0">🎮 <a href="{g["link"]}" '
+                f'style="color:#1a73e8;text-decoration:none;font-weight:bold">{g["title"]}</a></p>'
+            )
+
+    inner = '\n'.join(rows)
+    return (
+        '<table width="100%" style="border-collapse:collapse;margin-bottom:8px;'
+        'border:2px solid #4caf50">'
+        '<tr><td style="background:#f1f8e9;padding:8px 16px;font-weight:bold;font-size:14px">'
+        '🎁 Darmowe gry — teraz!</td></tr>'
+        f'<tr><td style="padding:8px 16px">{inner}</td></tr>'
+        '</table>'
+    )
 
 
 # ── Claude ────────────────────────────────────────────────────────────────────
@@ -761,10 +985,12 @@ def main():
     kety_kety_pl     = fetch_rss_items('https://kety.pl/rss/aktualnosci.xml', max_items=15)
     kety_mamnewsa    = fetch_news_rss('site:mamnewsa.pl', max_items=15)
     kety_24kety      = fetch_rss_items('https://24kety.pl/feed/', max_items=15)
-    gaming_gryonline = fetch_rss_items('https://www.gry-online.pl/rss/news.xml', max_items=5)
-    gaming_lowcygier = fetch_rss_items('https://lowcygier.pl/feed/', max_items=5)
-    epic_games       = fetch_article('https://store.epicgames.com/en-US/free-games')
-    gog_free         = fetch_article('https://www.gog.com/en/games?features=free')
+    gaming_gryonline   = fetch_rss_items('https://www.gry-online.pl/rss/news.xml', max_items=20)
+    gaming_gram        = fetch_rss_items('https://www.gram.pl/rss/content.xml', max_items=20)
+    gaming_ign         = fetch_rss_items('https://pl.ign.com/feed.xml', max_items=20)
+    epic_free          = fetch_epic_free()
+    gog_free_list      = fetch_gog_free()
+    watched_news_raw   = fetch_watched_games_news()
 
     # Budowanie sekcji newsów — mały Claude call na streszczenia, HTML w Pythonie
     print('Generuje streszczenia newsow...')
@@ -780,6 +1006,45 @@ def main():
         build_news_section_html('Kęty i okolice', local_sel,
                                 bg='#fff8e1', icon='🏙️')
     )
+
+    print('Generuje sekcje gamingowa...')
+    gaming_all      = gaming_gryonline + gaming_gram + gaming_ign
+    gaming_sel      = select_and_summarize_gaming(gaming_all)
+    watched_sel     = select_watched_games_updates(watched_news_raw)
+    free_games_html = build_free_games_html(epic_free, gog_free_list)
+    gaming_news_html = build_news_section_html(
+        'Newsy — Gry-Online, Gram.pl, IGN.pl', gaming_sel, bg='#fce4ec', icon='🎮'
+    )
+    if watched_sel:
+        watched_rows = []
+        for it, summ in watched_sel:
+            link = it.get('link', '')
+            title_html = (
+                f'<a href="{link}" style="color:#1a73e8;text-decoration:none;font-weight:bold">{it["title"]}</a>'
+                if link else f'<b>{it["title"]}</b>'
+            )
+            watched_rows.append(
+                f'<p style="margin:4px 0;padding:6px 0;border-bottom:1px solid #f0f0f0">'
+                f'🎯 {title_html}<br>'
+                f'<span style="color:#555;font-size:13px">{summ}</span></p>'
+            )
+        inner = '\n'.join(watched_rows)
+        watched_html = (
+            '<table width="100%" style="border-collapse:collapse;margin-bottom:8px">'
+            '<tr><td style="background:#f3e5f5;padding:8px 16px;font-weight:bold;font-size:14px">'
+            '🎯 Obserwowane gry — nowości, patche, DLC, eventy</td></tr>'
+            f'<tr><td style="padding:4px 16px">{inner}</td></tr>'
+            '</table>'
+        )
+    else:
+        watched_html = (
+            '<table width="100%" style="border-collapse:collapse;margin-bottom:8px">'
+            '<tr><td style="background:#f3e5f5;padding:8px 16px;font-weight:bold;font-size:14px">'
+            '🎯 Obserwowane gry — nowości, patche, DLC, eventy</td></tr>'
+            '<tr><td style="padding:8px 16px;color:#888">Brak nowych informacji o obserwowanych grach.</td></tr>'
+            '</table>'
+        )
+    gaming_full_html = free_games_html + gaming_news_html + watched_html
 
     # Warunkowe bloki danych i instrukcji pogodowych
     if not is_free_day:
@@ -895,15 +1160,11 @@ STRUKTURA (w tej kolejnosci):
    <!-- NEWS_PLACEHOLDER -->
    (nie generuj zadnych artykulow — system wstawi je automatycznie)
 
-9. GAMING I DARMOWE GRY (naglowek tlo #fce4ec):
-   a) DARMOWE GRY (ramka 2px solid #4caf50, tlo #f1f8e9, NA GORZE!):
-      Z danych EPIC i GOG wyodrebnij konkretne gry. Kazda: nazwa jako <a href="URL">Gra</a>.
-      Podaj termin jesli widoczny. Jesli brak konkretnych gier: "Brak darmowych gier w tej chwili"
-   b) GRY-ONLINE.PL — NEWSY:
-      Kazdy artykul: tytuł jako <a href="URL" style="color:#1a73e8;text-decoration:none">Tytuł</a>
-      Pod spodem 2-3 punkty (•) streszczajace na podstawie tytulu i opisu.
-   c) ŁOWCY GIER:
-      Kazdy: <a href="URL" style="color:#1a73e8;text-decoration:none">Tytuł</a> — 1 zdanie opisu
+9. GAMING I DARMOWE GRY:
+   Sekcja gamingowa jest generowana automatycznie poza tym promptem.
+   Wstaw w tym miejscu DOKLADNIE ten znacznik HTML i nic wiecej:
+   <!-- GAMING_PLACEHOLDER -->
+   (nie generuj zadnych tresci gamingowych — system wstawi je automatycznie)
 
 ---
 DANE:
@@ -945,18 +1206,6 @@ Bielsko-Biala -> Kety: {f"{traffic_bb_kety['duration_min']} min | {traffic_bb_ke
 == ALERTY LOKALNE — KETY/OSWIECIM (Google News) ==
 {fmt_rss_items(news_alerts_kety)}
 
-== GAMING — GRY-ONLINE.PL ==
-{fmt_rss_items(gaming_gryonline)}
-
-== GAMING — ŁOWCY GIER ==
-{fmt_rss_items(gaming_lowcygier)}
-
-== DARMOWE GRY — EPIC GAMES ==
-{epic_games}
-
-== DARMOWE GRY — GOG ==
-{gog_free}
-
 ---
 Zacznij od <!DOCTYPE html><html><body> i skoncz </body></html>.
 Caly email: jedna zewnetrzna tabela width="600" align="center" style="background:#ffffff;border:1px solid #e0e0e0;font-family:Arial,sans-serif;font-size:14px".
@@ -973,8 +1222,9 @@ skróc streszczenia lub pomiń ostatnie artykuły w sekcji, ale ZAWSZE zakoncz <
     elif '<html' in report:
         report = report[report.find('<html'):]
 
-    # Wstaw gotowy HTML newsów w miejsce placeholdera
+    # Wstaw gotowy HTML newsów i gamingu w miejsce placeholderów
     report = report.replace('<!-- NEWS_PLACEHOLDER -->', news_html)
+    report = report.replace('<!-- GAMING_PLACEHOLDER -->', gaming_full_html)
 
     print('Wysylam email...')
     send_email_graph(access_token, f'Poranny raport - {today}', report)
