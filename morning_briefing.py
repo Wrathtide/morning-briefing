@@ -566,10 +566,10 @@ def fmt_rss_items(items):
 
 # ── Claude ────────────────────────────────────────────────────────────────────
 
-def call_claude(prompt):
+def call_claude(prompt, max_tokens=8192, timeout=300):
     data = json.dumps({
         'model': 'claude-sonnet-4-6',
-        'max_tokens': 8192,
+        'max_tokens': max_tokens,
         'messages': [{'role': 'user', 'content': prompt}],
     }).encode('utf-8')
     req = urllib.request.Request(
@@ -581,8 +581,84 @@ def call_claude(prompt):
             'content-type': 'application/json',
         },
     )
-    with urllib.request.urlopen(req, timeout=300) as r:
+    with urllib.request.urlopen(req, timeout=timeout) as r:
         return json.loads(r.read())['content'][0]['text']
+
+
+def get_news_summaries(world_items, poland_items, local_items):
+    """Małe, szybkie wołanie Claude — tylko plain-text streszczenia."""
+    sections = []
+    if world_items:
+        sections.append(f'=== SWIAT ===')
+        for i, it in enumerate(world_items):
+            sections.append(f'{i+1}. {it["title"]}')
+    if poland_items:
+        sections.append(f'=== POLSKA ===')
+        for i, it in enumerate(poland_items):
+            sections.append(f'{i+1}. {it["title"]}')
+    if local_items:
+        sections.append(f'=== LOKALNE ===')
+        for i, it in enumerate(local_items):
+            sections.append(f'{i+1}. {it["title"]}')
+
+    prompt = (
+        'Napisz 1 zdanie po polsku (max 15 słów) dla każdego artykułu.\n'
+        'Dla sekcji LOKALNE: jeśli artykuł dotyczy sportu, treści rodzinnych lub dla dzieci, '
+        'napisz zamiast streszczenia dokładnie: SKIP\n'
+        'Zachowaj format z sekcjami i numeracją.\n\n'
+        + '\n'.join(sections)
+    )
+    result = call_claude(prompt, max_tokens=2000, timeout=60)
+
+    world_sum, poland_sum, local_sum = [], [], []
+    current = None
+    for line in result.split('\n'):
+        line = line.strip()
+        if '=== SWIAT' in line:   current = 'W'
+        elif '=== POLSKA' in line: current = 'P'
+        elif '=== LOKALNE' in line: current = 'L'
+        else:
+            m = re.match(r'^\d+\.\s+(.+)', line)
+            if m:
+                s = m.group(1).strip()
+                if current == 'W': world_sum.append(s)
+                elif current == 'P': poland_sum.append(s)
+                elif current == 'L': local_sum.append(s)
+
+    for lst, items in [(world_sum, world_items), (poland_sum, poland_items), (local_sum, local_items)]:
+        while len(lst) < len(items):
+            lst.append(items[len(lst)]['title'][:100])
+
+    return world_sum[:len(world_items)], poland_sum[:len(poland_items)], local_sum[:len(local_items)]
+
+
+def build_news_section_html(header, items, summaries, bg='#e8f5e9', icon='🗞️', skip_marked=False):
+    """Buduje HTML dla jednej podsekcji newsów w Pythonie."""
+    rows = []
+    for it, summ in zip(items, summaries):
+        if skip_marked and summ.strip().upper() == 'SKIP':
+            continue
+        link = it.get('link', '')
+        title = it['title']
+        title_html = (
+            f'<a href="{link}" style="color:#1a73e8;text-decoration:none;font-weight:bold">{title}</a>'
+            if link else f'<b>{title}</b>'
+        )
+        rows.append(
+            f'<p style="margin:4px 0;padding:6px 0;border-bottom:1px solid #f0f0f0">'
+            f'◆ {title_html}<br>'
+            f'<span style="color:#555;font-size:13px">{summ}</span></p>'
+        )
+    if not rows:
+        return ''
+    inner = '\n'.join(rows)
+    return (
+        f'<table width="100%" style="border-collapse:collapse;margin-bottom:8px">'
+        f'<tr><td style="background:{bg};padding:8px 16px;font-weight:bold;font-size:14px">'
+        f'{icon} {header}</td></tr>'
+        f'<tr><td style="padding:4px 16px">{inner}</td></tr>'
+        f'</table>'
+    )
 
 
 # ── Email ─────────────────────────────────────────────────────────────────────
@@ -674,6 +750,21 @@ def main():
     gaming_lowcygier = fetch_rss_items('https://lowcygier.pl/feed/', max_items=5)
     epic_games       = fetch_article('https://store.epicgames.com/en-US/free-games')
     gog_free         = fetch_article('https://www.gog.com/en/games?features=free')
+
+    # Budowanie sekcji newsów — mały Claude call na streszczenia, HTML w Pythonie
+    print('Generuje streszczenia newsow...')
+    world_items  = (world_tvn24 + world_gnews)[:10]
+    poland_items = (poland_oko + poland_tvn24)[:10]
+    local_items  = (kety_kety_pl + kety_mamnewsa + kety_24kety)[:10]
+    world_sum, poland_sum, local_sum = get_news_summaries(world_items, poland_items, local_items)
+    news_html = (
+        build_news_section_html('Świat — polityka, gospodarka, tech/AI', world_items, world_sum,
+                                bg='#e3f2fd', icon='🌍') +
+        build_news_section_html('Polska', poland_items, poland_sum,
+                                bg='#e8f5e9', icon='🇵🇱') +
+        build_news_section_html('Kęty i okolice', local_items, local_sum,
+                                bg='#fff8e1', icon='🏙️', skip_marked=True)
+    )
 
     # Warunkowe bloki danych i instrukcji pogodowych
     if not is_free_day:
@@ -783,22 +874,11 @@ STRUKTURA (w tej kolejnosci):
 7. ZADANIA TO DO (naglowek tlo #f3e5f5):
    Lista, terminy pogrubione czerwono
 
-8. WIADOMOSCI (naglowek tlo #e8f5e9):
-   WAZNE: dla kazdego newsa z linkiem — tytuł jako <a href="URL" style="color:#1a73e8;text-decoration:none">Tytuł</a>
-   Podsekcje:
-   ZASADA LIMITOW (obowiazuje dla a/b/c):
-      Normalnie: max 10 newsow na podsekcje.
-      Jesli wykryjesz KRYTYCZNE wydarzenie (wojna, epidemia, pandemia, skazenie, pozar w okolicach Ket,
-      atak jednego panstwa na drugie, atak na Polske, seryjny morderca w kraju/za granica,
-      katastrofa naturalna, masowe zdarzenie z ofiarami, wybuch) — rozszerz do max 15 w tej podsekcji.
-   a) SWIAT — polityka, gospodarka, tech/AI, cyberbezpieczenstwo:
-      Zrodla: TVN24 Swiat + Google News World. Kazdy: tytuł-link + 1 zdanie po polsku.
-   b) POLSKA (te same obszary):
-      Zrodla: OKO.press + TVN24 Najwazniejsze. Kazdy: tytuł-link + 1 zdanie po polsku.
-   c) LOKALNE — Kety i okolice (portale: kety.pl, mamnewsa.pl, 24kety.pl):
-      FILTRUJ: pokaz TYLKO wydarzenia, eventy, ogolne wiadomosci z okolicy
-      POMIŃ bez wyjatku: sport, tresci rodzinne, tresci dla dzieci
-      Tytul jako <a href="URL" style="color:#1a73e8;text-decoration:none">Tytuł</a> + 1 zdanie opisu
+8. WIADOMOSCI (naglowek tlo #e8f5e9, ikona 🗞️ "Wiadomości"):
+   Sekcja newsow jest generowana automatycznie poza tym promptem.
+   Wstaw w tym miejscu DOKLADNIE ten znacznik HTML i nic wiecej:
+   <!-- NEWS_PLACEHOLDER -->
+   (nie generuj zadnych artykulow — system wstawi je automatycznie)
 
 9. GAMING I DARMOWE GRY (naglowek tlo #fce4ec):
    a) DARMOWE GRY (ramka 2px solid #4caf50, tlo #f1f8e9, NA GORZE!):
@@ -850,28 +930,6 @@ Bielsko-Biala -> Kety: {f"{traffic_bb_kety['duration_min']} min | {traffic_bb_ke
 == ALERTY LOKALNE — KETY/OSWIECIM (Google News) ==
 {fmt_rss_items(news_alerts_kety)}
 
-== WIADOMOSCI SWIAT — TVN24 ==
-{fmt_rss_items(world_tvn24)}
-
-== WIADOMOSCI SWIAT — Google News World ==
-{fmt_rss_items(world_gnews)}
-
-== WIADOMOSCI POLSKA — OKO.press ==
-{fmt_rss_items(poland_oko)}
-
-== WIADOMOSCI POLSKA — TVN24 ==
-{fmt_rss_items(poland_tvn24)}
-
-== WIADOMOSCI LOKALNE KETY/OSWIECIM ==
-[kety.pl/rss]
-{fmt_rss_items(kety_kety_pl)}
-
-[mamnewsa.pl via Google News]
-{fmt_rss_items(kety_mamnewsa)}
-
-[24kety.pl/feed]
-{fmt_rss_items(kety_24kety)}
-
 == GAMING — GRY-ONLINE.PL ==
 {fmt_rss_items(gaming_gryonline)}
 
@@ -899,6 +957,9 @@ skróc streszczenia lub pomiń ostatnie artykuły w sekcji, ale ZAWSZE zakoncz <
         report = report[report.find('<!DOCTYPE'):]
     elif '<html' in report:
         report = report[report.find('<html'):]
+
+    # Wstaw gotowy HTML newsów w miejsce placeholdera
+    report = report.replace('<!-- NEWS_PLACEHOLDER -->', news_html)
 
     print('Wysylam email...')
     send_email_graph(access_token, f'Poranny raport - {today}', report)
