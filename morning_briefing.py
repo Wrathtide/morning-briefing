@@ -514,10 +514,10 @@ def fetch_traffic_osrm(lat1, lon1, lat2, lon2):
 
 # ── Newsy ─────────────────────────────────────────────────────────────────────
 
-def fetch_news_rss(query, lang='pl', country='PL'):
+def fetch_news_rss(query, lang='pl', country='PL', max_items=5):
     encoded = urllib.parse.quote(query)
     url = f'https://news.google.com/rss/search?q={encoded}&hl={lang}&gl={country}&ceid={country}:{lang}'
-    return fetch_url(url)[:4000]
+    return fetch_rss_items(url, max_items=max_items)
 
 
 def fetch_article(article_url):
