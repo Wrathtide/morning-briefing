@@ -725,34 +725,107 @@ def select_and_summarize_gaming(gaming_items):
 
 
 def select_watched_games_updates(items):
-    """Claude filtruje newsy o obserwowanych grach — bez limitu, wszystko istotne."""
+    """Claude filtruje i grupuje newsy o obserwowanych grach po grach."""
     if not items:
-        return []
+        return {}
     game_names = ', '.join(g[0] for g in WATCHED_GAMES)
     lines = [f'{i+1}. {it["title"]}' for i, it in enumerate(items)]
 
     prompt = (
         'Filtruj poniższe newsy. Zostaw TYLKO te które dotyczą co najmniej jednej z gier:\n'
         f'{game_names}\n\n'
-        'Uwzględniaj: patche, DLC, eventy w grze, darmowe przedmioty, zapowiedzi, bety, '
-        'duże aktualizacje, nowe gry z serii, zamknięcia/bankructwa studiów.\n'
-        'Pomiń: ogólne newsy gamingowe niezwiązane z tymi grami.\n\n'
-        'Dla każdego wybranego artykułu podaj ORYGINALNY numer i 1 zdanie po polsku '
-        'zaczynające się od nazwy gry której dotyczy, np.:\n'
-        '5. DayZ: nowy patch 1.27 dodaje zimowe mapy.\n\n'
+        'Uwzględniaj: patche, DLC, eventy, darmowe przedmioty, zapowiedzi, bety, '
+        'aktualizacje, nowe gry z serii, zamknięcia studiów. Pomiń niezwiązane z tymi grami.\n\n'
+        'Format — artykuły pogrupowane po grach:\n'
+        '=== Nazwa gry ===\n'
+        'N. Jedno zdanie po polsku (co nowego/co się zmieniło).\n'
+        '  Jeśli artykuł dotyczy patcha/aktualizacji — dodaj konkretne zmiany:\n'
+        '  • Zmiana 1 (np. "Dodano zimowe mapy Namalsk")\n'
+        '  • Zmiana 2 (np. "Poprawiono synchronizację ekwipunku")\n'
+        '  Jeśli NIE jest to patch — tylko zdanie, BEZ punktów.\n\n'
         'Artykuły:\n' + '\n'.join(lines)
     )
-    result = call_claude(prompt, max_tokens=2000, timeout=90)
+    result = call_claude(prompt, max_tokens=3000, timeout=90)
 
-    selected = []
+    grouped = {}
+    current_game = None
+    current_article = None
+
     for line in result.split('\n'):
-        m = re.match(r'^(\d+)\.\s+(.+)', line.strip())
-        if m:
-            idx = int(m.group(1)) - 1
-            summary = m.group(2).strip()
+        m_game = re.match(r'^===\s*(.+?)\s*===', line.strip())
+        if m_game:
+            current_game = m_game.group(1).strip()
+            if current_game not in grouped:
+                grouped[current_game] = []
+            current_article = None
+            continue
+
+        m_art = re.match(r'^(\d+)\.\s+(.+)', line.strip())
+        if m_art and current_game is not None:
+            idx = int(m_art.group(1)) - 1
             if 0 <= idx < len(items):
-                selected.append((items[idx], summary))
-    return selected
+                current_article = {
+                    'item': items[idx],
+                    'summary': m_art.group(2).strip(),
+                    'bullets': []
+                }
+                grouped[current_game].append(current_article)
+            continue
+
+        m_bullet = re.match(r'^\s*[•\-\*]\s+(.+)', line)
+        if m_bullet and current_article is not None:
+            current_article['bullets'].append(m_bullet.group(1).strip())
+
+    return grouped
+
+
+def build_watched_html(grouped):
+    """Buduje HTML sekcji obserwowanych gier pogrupowanych po grach."""
+    if not grouped:
+        return (
+            '<table width="100%" style="border-collapse:collapse;margin-bottom:8px">'
+            '<tr><td style="background:#f3e5f5;padding:8px 16px;font-weight:bold;font-size:14px">'
+            '🎯 Obserwowane gry — nowości, patche, DLC, eventy</td></tr>'
+            '<tr><td style="padding:8px 16px;color:#888">Brak nowych informacji o obserwowanych grach.</td></tr>'
+            '</table>'
+        )
+
+    rows = []
+    for game_name, articles in grouped.items():
+        if not articles:
+            continue
+        rows.append(
+            f'<p style="margin:10px 0 2px 0;font-weight:bold;font-size:14px;color:#6a1b9a">'
+            f'🎮 {game_name}</p>'
+        )
+        for art in articles:
+            item = art['item']
+            link = item.get('link', '')
+            title = item['title']
+            title_html = (
+                f'<a href="{link}" style="color:#1a73e8;text-decoration:none">{title}</a>'
+                if link else title
+            )
+            article_html = (
+                f'<p style="margin:2px 0 2px 16px;padding:4px 0;border-bottom:1px solid #f0f0f0">'
+                f'◆ {title_html}<br>'
+                f'<span style="color:#555;font-size:13px">{art["summary"]}</span>'
+            )
+            for b in art['bullets']:
+                article_html += (
+                    f'<br><span style="color:#555;font-size:13px;margin-left:12px">• {b}</span>'
+                )
+            article_html += '</p>'
+            rows.append(article_html)
+
+    inner = '\n'.join(rows)
+    return (
+        '<table width="100%" style="border-collapse:collapse;margin-bottom:8px">'
+        '<tr><td style="background:#f3e5f5;padding:8px 16px;font-weight:bold;font-size:14px">'
+        '🎯 Obserwowane gry — nowości, patche, DLC, eventy</td></tr>'
+        f'<tr><td style="padding:4px 16px">{inner}</td></tr>'
+        '</table>'
+    )
 
 
 def build_free_games_html(epic_items, gog_items):
@@ -1015,35 +1088,7 @@ def main():
     gaming_news_html = build_news_section_html(
         'Newsy — Gry-Online, Gram.pl, IGN.pl', gaming_sel, bg='#fce4ec', icon='🎮'
     )
-    if watched_sel:
-        watched_rows = []
-        for it, summ in watched_sel:
-            link = it.get('link', '')
-            title_html = (
-                f'<a href="{link}" style="color:#1a73e8;text-decoration:none;font-weight:bold">{it["title"]}</a>'
-                if link else f'<b>{it["title"]}</b>'
-            )
-            watched_rows.append(
-                f'<p style="margin:4px 0;padding:6px 0;border-bottom:1px solid #f0f0f0">'
-                f'🎯 {title_html}<br>'
-                f'<span style="color:#555;font-size:13px">{summ}</span></p>'
-            )
-        inner = '\n'.join(watched_rows)
-        watched_html = (
-            '<table width="100%" style="border-collapse:collapse;margin-bottom:8px">'
-            '<tr><td style="background:#f3e5f5;padding:8px 16px;font-weight:bold;font-size:14px">'
-            '🎯 Obserwowane gry — nowości, patche, DLC, eventy</td></tr>'
-            f'<tr><td style="padding:4px 16px">{inner}</td></tr>'
-            '</table>'
-        )
-    else:
-        watched_html = (
-            '<table width="100%" style="border-collapse:collapse;margin-bottom:8px">'
-            '<tr><td style="background:#f3e5f5;padding:8px 16px;font-weight:bold;font-size:14px">'
-            '🎯 Obserwowane gry — nowości, patche, DLC, eventy</td></tr>'
-            '<tr><td style="padding:8px 16px;color:#888">Brak nowych informacji o obserwowanych grach.</td></tr>'
-            '</table>'
-        )
+    watched_html    = build_watched_html(watched_sel)
     gaming_full_html = free_games_html + gaming_news_html + watched_html
 
     # Warunkowe bloki danych i instrukcji pogodowych
