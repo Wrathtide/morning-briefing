@@ -585,59 +585,74 @@ def call_claude(prompt, max_tokens=8192, timeout=300):
         return json.loads(r.read())['content'][0]['text']
 
 
-def get_news_summaries(world_items, poland_items, local_items):
-    """Małe, szybkie wołanie Claude — tylko plain-text streszczenia."""
+def select_and_summarize_news(world_items, poland_items, local_items):
+    """Claude przegląda WSZYSTKIE artykuły, wybiera najważniejsze i pisze streszczenia.
+    Zwraca listy (item, summary) dla wybranych artykułów."""
     sections = []
     if world_items:
-        sections.append(f'=== SWIAT ===')
+        sections.append('=== SWIAT ===')
         for i, it in enumerate(world_items):
             sections.append(f'{i+1}. {it["title"]}')
     if poland_items:
-        sections.append(f'=== POLSKA ===')
+        sections.append('=== POLSKA ===')
         for i, it in enumerate(poland_items):
             sections.append(f'{i+1}. {it["title"]}')
     if local_items:
-        sections.append(f'=== LOKALNE ===')
+        sections.append('=== LOKALNE ===')
         for i, it in enumerate(local_items):
             sections.append(f'{i+1}. {it["title"]}')
 
     prompt = (
-        'Napisz 1 zdanie po polsku (max 15 słów) dla każdego artykułu.\n'
-        'Dla sekcji LOKALNE: jeśli artykuł dotyczy sportu, treści rodzinnych lub dla dzieci, '
-        'napisz zamiast streszczenia dokładnie: SKIP\n'
-        'Zachowaj format z sekcjami i numeracją.\n\n'
+        'Jesteś redaktorem prasówki dla polskiego czytelnika mieszkającego w Kętach (małe miasto, woj. małopolskie).\n'
+        'Przejrzyj poniższe artykuły i wybierz NAJWAŻNIEJSZE — te które naprawdę warto przeczytać.\n\n'
+        'ZASADY SELEKCJI:\n'
+        '- SWIAT i POLSKA: max 10 artykułów (do 15 przy wojnie/epidemii/katastrofie/ataku na kraj)\n'
+        '  Priorytet: polityka, gospodarka, bezpieczeństwo, tech/AI, ważne wydarzenia\n'
+        '  Pomiń: sport, celebrytów, clickbait, powielające się tematy (zostaw najlepszy z grupy)\n'
+        '- LOKALNE: max 10 artykułów\n'
+        '  Pomiń bezwzględnie: sport, treści rodzinne/dla dzieci\n\n'
+        'Format odpowiedzi — tylko wybrane artykuły z ORYGINALNYM numerem i streszczeniem po polsku (max 15 słów):\n'
+        '=== SWIAT ===\n'
+        '3. Zdanie streszczające.\n'
+        '7. Zdanie streszczające.\n'
+        '=== POLSKA ===\n'
+        '2. Zdanie streszczające.\n'
+        '=== LOKALNE ===\n'
+        '1. Zdanie streszczające.\n\n'
+        'Artykuły do przejrzenia:\n'
         + '\n'.join(sections)
     )
-    result = call_claude(prompt, max_tokens=2000, timeout=60)
 
-    world_sum, poland_sum, local_sum = [], [], []
+    result = call_claude(prompt, max_tokens=3000, timeout=90)
+
+    world_sel, poland_sel, local_sel = [], [], []
     current = None
     for line in result.split('\n'):
         line = line.strip()
-        if '=== SWIAT' in line:   current = 'W'
+        if '=== SWIAT' in line:    current = 'W'
         elif '=== POLSKA' in line: current = 'P'
         elif '=== LOKALNE' in line: current = 'L'
         else:
-            m = re.match(r'^\d+\.\s+(.+)', line)
+            m = re.match(r'^(\d+)\.\s+(.+)', line)
             if m:
-                s = m.group(1).strip()
-                if current == 'W': world_sum.append(s)
-                elif current == 'P': poland_sum.append(s)
-                elif current == 'L': local_sum.append(s)
+                idx = int(m.group(1)) - 1
+                summary = m.group(2).strip()
+                if current == 'W' and 0 <= idx < len(world_items):
+                    world_sel.append((world_items[idx], summary))
+                elif current == 'P' and 0 <= idx < len(poland_items):
+                    poland_sel.append((poland_items[idx], summary))
+                elif current == 'L' and 0 <= idx < len(local_items):
+                    local_sel.append((local_items[idx], summary))
 
-    for lst, items in [(world_sum, world_items), (poland_sum, poland_items), (local_sum, local_items)]:
-        while len(lst) < len(items):
-            lst.append(items[len(lst)]['title'][:100])
-
-    return world_sum[:len(world_items)], poland_sum[:len(poland_items)], local_sum[:len(local_items)]
+    return world_sel, poland_sel, local_sel
 
 
-def build_news_section_html(header, items, summaries, bg='#e8f5e9', icon='🗞️', skip_marked=False):
-    """Buduje HTML dla jednej podsekcji newsów w Pythonie."""
+def build_news_section_html(header, selected, bg='#e8f5e9', icon='🗞️'):
+    """Buduje HTML dla jednej podsekcji newsów. selected = lista (item, summary)."""
+    if not selected:
+        return ''
     rows = []
-    for it, summ in zip(items, summaries):
-        if skip_marked and summ.strip().upper() == 'SKIP':
-            continue
+    for it, summ in selected:
         link = it.get('link', '')
         title = it['title']
         title_html = (
@@ -649,8 +664,6 @@ def build_news_section_html(header, items, summaries, bg='#e8f5e9', icon='🗞�
             f'◆ {title_html}<br>'
             f'<span style="color:#555;font-size:13px">{summ}</span></p>'
         )
-    if not rows:
-        return ''
     inner = '\n'.join(rows)
     return (
         f'<table width="100%" style="border-collapse:collapse;margin-bottom:8px">'
@@ -753,17 +766,17 @@ def main():
 
     # Budowanie sekcji newsów — mały Claude call na streszczenia, HTML w Pythonie
     print('Generuje streszczenia newsow...')
-    world_items  = (world_tvn24 + world_gnews)[:10]
-    poland_items = (poland_oko + poland_tvn24)[:10]
-    local_items  = (kety_kety_pl + kety_mamnewsa + kety_24kety)[:10]
-    world_sum, poland_sum, local_sum = get_news_summaries(world_items, poland_items, local_items)
+    world_items  = world_tvn24 + world_gnews
+    poland_items = poland_oko + poland_tvn24
+    local_items  = kety_kety_pl + kety_mamnewsa + kety_24kety
+    world_sel, poland_sel, local_sel = select_and_summarize_news(world_items, poland_items, local_items)
     news_html = (
-        build_news_section_html('Świat — polityka, gospodarka, tech/AI', world_items, world_sum,
+        build_news_section_html('Świat — polityka, gospodarka, tech/AI', world_sel,
                                 bg='#e3f2fd', icon='🌍') +
-        build_news_section_html('Polska', poland_items, poland_sum,
+        build_news_section_html('Polska', poland_sel,
                                 bg='#e8f5e9', icon='🇵🇱') +
-        build_news_section_html('Kęty i okolice', local_items, local_sum,
-                                bg='#fff8e1', icon='🏙️', skip_marked=True)
+        build_news_section_html('Kęty i okolice', local_sel,
+                                bg='#fff8e1', icon='🏙️')
     )
 
     # Warunkowe bloki danych i instrukcji pogodowych
