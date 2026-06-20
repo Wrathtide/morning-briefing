@@ -661,15 +661,15 @@ def main():
         traffic_bb_kety = None
 
     print('Pobieram newsy...')
-    world_tvn24      = fetch_rss_items('https://tvn24.pl/swiat.xml', max_items=5)
-    world_gnews      = fetch_news_rss('world economy technology AI cybersecurity politics', lang='en', country='US')
-    poland_oko       = fetch_rss_items('https://oko.press/feed/', max_items=4)
-    poland_tvn24     = fetch_rss_items('https://tvn24.pl/najwazniejsze.xml', max_items=4)
+    world_tvn24      = fetch_rss_items('https://tvn24.pl/swiat.xml', max_items=15)
+    world_gnews      = fetch_news_rss('world economy technology AI cybersecurity politics', lang='en', country='US', max_items=15)
+    poland_oko       = fetch_rss_items('https://oko.press/feed/', max_items=15)
+    poland_tvn24     = fetch_rss_items('https://tvn24.pl/najwazniejsze.xml', max_items=15)
     rcb_alerts       = fetch_rss_items('https://www.rcb.gov.pl/feed/', max_items=5)
     news_alerts_kety = fetch_news_rss('Kęty Oświęcim straż pożarna policja sanepid ostrzeżenie awaria skażenie')
-    kety_kety_pl     = fetch_rss_items('https://kety.pl/rss/aktualnosci.xml', max_items=10)
-    kety_mamnewsa    = fetch_news_rss('site:mamnewsa.pl', max_items=10)
-    kety_24kety      = fetch_rss_items('https://24kety.pl/feed/', max_items=10)
+    kety_kety_pl     = fetch_rss_items('https://kety.pl/rss/aktualnosci.xml', max_items=15)
+    kety_mamnewsa    = fetch_news_rss('site:mamnewsa.pl', max_items=15)
+    kety_24kety      = fetch_rss_items('https://24kety.pl/feed/', max_items=15)
     gaming_gryonline = fetch_rss_items('https://www.gry-online.pl/rss/news.xml', max_items=5)
     gaming_lowcygier = fetch_rss_items('https://lowcygier.pl/feed/', max_items=5)
     epic_games       = fetch_article('https://store.epicgames.com/en-US/free-games')
@@ -785,14 +785,19 @@ STRUKTURA (w tej kolejnosci):
 8. WIADOMOSCI (naglowek tlo #e8f5e9):
    WAZNE: dla kazdego newsa z linkiem — tytuł jako <a href="URL" style="color:#1a73e8;text-decoration:none">Tytuł</a>
    Podsekcje:
+   ZASADA LIMITOW (obowiazuje dla a/b/c):
+      Normalnie: max 10 newsow na podsekcje.
+      Jesli wykryjesz KRYTYCZNE wydarzenie (wojna, epidemia, pandemia, skazenie, pozar w okolicach Ket,
+      atak jednego panstwa na drugie, atak na Polske, seryjny morderca w kraju/za granica,
+      katastrofa naturalna, masowe zdarzenie z ofiarami, wybuch) — rozszerz do max 15 w tej podsekcji.
    a) SWIAT — polityka, gospodarka, tech/AI, cyberbezpieczenstwo:
-      Zrodla: TVN24 Swiat + Google News World. 4-6 najwazniejszych. Kazdy: tytuł-link + 2 zdania po polsku.
+      Zrodla: TVN24 Swiat + Google News World. Kazdy: tytuł-link + 2 zdania po polsku.
    b) POLSKA (te same obszary):
-      Zrodla: OKO.press + TVN24 Najwazniejsze. 4-6 artykulow z linkami + 2 zdania po polsku.
+      Zrodla: OKO.press + TVN24 Najwazniejsze. Kazdy: tytuł-link + 2 zdania po polsku.
    c) LOKALNE — Kety i okolice (portale: kety.pl, mamnewsa.pl, 24kety.pl):
       FILTRUJ: pokaz TYLKO wydarzenia, eventy, ogolne wiadomosci z okolicy
       POMIŃ bez wyjatku: sport, tresci rodzinne, tresci dla dzieci
-      Az do 10 newsow, tytul jako <a href="URL" style="color:#1a73e8;text-decoration:none">Tytuł</a> + 1 zdanie opisu
+      Tytul jako <a href="URL" style="color:#1a73e8;text-decoration:none">Tytuł</a> + 1 zdanie opisu
 
 9. GAMING I DARMOWE GRY (naglowek tlo #fce4ec):
    a) DARMOWE GRY (ramka 2px solid #4caf50, tlo #f1f8e9, NA GORZE!):
