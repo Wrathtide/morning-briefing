@@ -5,6 +5,7 @@ import xml.etree.ElementTree as ET
 import urllib.request
 import urllib.parse
 import zoneinfo
+import email.utils
 from datetime import datetime, timedelta, timezone
 
 ANTHROPIC_API_KEY = os.environ['ANTHROPIC_API_KEY']
@@ -561,29 +562,51 @@ def fetch_article(article_url):
     return fetch_url(f'https://r.jina.ai/{article_url}', timeout=45)[:3000]
 
 
+def _parse_pub_date(date_str):
+    """Parsuje datę z RSS (RFC 2822) lub Atom (ISO 8601) → aware datetime lub None."""
+    if not date_str:
+        return None
+    date_str = date_str.strip()
+    try:
+        return email.utils.parsedate_to_datetime(date_str)
+    except Exception:
+        pass
+    try:
+        return datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+    except Exception:
+        pass
+    return None
+
+
 def fetch_rss_items(url, max_items=6):
     raw = fetch_url(url, timeout=20)
     if not raw or raw.startswith('[Blad'):
         return []
+    cutoff = datetime.now(timezone.utc) - timedelta(days=3)
     try:
         root = ET.fromstring(raw)
         items = []
         for item in root.findall('.//item'):
             title = (item.findtext('title') or '').strip()
-            link = (item.findtext('link') or '').strip()
-            desc = re.sub(r'<[^>]+>', '', (item.findtext('description') or ''))[:300].strip()
-            if title:
+            link  = (item.findtext('link') or '').strip()
+            desc  = re.sub(r'<[^>]+>', '', (item.findtext('description') or ''))[:300].strip()
+            pub   = _parse_pub_date(item.findtext('pubDate'))
+            if title and (pub is None or pub >= cutoff):
                 items.append({'title': title, 'link': link, 'desc': desc})
         if not items:
-            for entry in root.findall('.//{http://www.w3.org/2005/Atom}entry'):
-                title = (entry.findtext('{http://www.w3.org/2005/Atom}title') or '').strip()
-                link_el = entry.find('{http://www.w3.org/2005/Atom}link')
+            NS = '{http://www.w3.org/2005/Atom}'
+            for entry in root.findall(f'.//{NS}entry'):
+                title = (entry.findtext(f'{NS}title') or '').strip()
+                link_el = entry.find(f'{NS}link')
                 link = (link_el.get('href') or '') if link_el is not None else ''
                 desc = re.sub(r'<[^>]+>', '', (
-                    entry.findtext('{http://www.w3.org/2005/Atom}summary') or
-                    entry.findtext('{http://www.w3.org/2005/Atom}content') or ''
+                    entry.findtext(f'{NS}summary') or
+                    entry.findtext(f'{NS}content') or ''
                 ))[:300].strip()
-                if title:
+                pub = _parse_pub_date(
+                    entry.findtext(f'{NS}published') or entry.findtext(f'{NS}updated')
+                )
+                if title and (pub is None or pub >= cutoff):
                     items.append({'title': title, 'link': link, 'desc': desc})
         return items[:max_items]
     except Exception:
