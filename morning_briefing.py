@@ -552,10 +552,10 @@ def fetch_traffic_osrm(lat1, lon1, lat2, lon2):
 
 # ── Newsy ─────────────────────────────────────────────────────────────────────
 
-def fetch_news_rss(query, lang='pl', country='PL', max_items=5):
+def fetch_news_rss(query, lang='pl', country='PL', max_items=5, max_age_days=3):
     encoded = urllib.parse.quote(query)
     url = f'https://news.google.com/rss/search?q={encoded}&hl={lang}&gl={country}&ceid={country}:{lang}'
-    return fetch_rss_items(url, max_items=max_items)
+    return fetch_rss_items(url, max_items=max_items, max_age_days=max_age_days)
 
 
 def fetch_article(article_url):
@@ -578,11 +578,11 @@ def _parse_pub_date(date_str):
     return None
 
 
-def fetch_rss_items(url, max_items=6):
+def fetch_rss_items(url, max_items=6, max_age_days=3):
     raw = fetch_url(url, timeout=20)
     if not raw or raw.startswith('[Blad'):
         return []
-    cutoff = datetime.now(timezone.utc) - timedelta(days=3)
+    cutoff = datetime.now(timezone.utc) - timedelta(days=max_age_days)
     try:
         root = ET.fromstring(raw)
         items = []
@@ -705,7 +705,7 @@ def fetch_watched_games_news():
     """Pobiera newsy o obserwowanych grach z Google News (3 zapytania)."""
     items = []
     for q in [_GAME_QUERY_1, _GAME_QUERY_2, _GAME_QUERY_3]:
-        items += fetch_news_rss(q, max_items=15)
+        items += fetch_news_rss(q, max_items=25, max_age_days=7)
     seen = set()
     unique = []
     for it in items:
@@ -903,22 +903,31 @@ def build_free_games_html(epic_items, gog_items):
 # ── Claude ────────────────────────────────────────────────────────────────────
 
 def call_claude(prompt, max_tokens=8192, timeout=300):
-    data = json.dumps({
-        'model': 'claude-sonnet-4-6',
-        'max_tokens': max_tokens,
-        'messages': [{'role': 'user', 'content': prompt}],
-    }).encode('utf-8')
-    req = urllib.request.Request(
-        'https://api.anthropic.com/v1/messages',
-        data=data,
-        headers={
-            'x-api-key': ANTHROPIC_API_KEY,
-            'anthropic-version': '2023-06-01',
-            'content-type': 'application/json',
-        },
-    )
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        return json.loads(r.read())['content'][0]['text']
+    def _do_call(p):
+        data = json.dumps({
+            'model': 'claude-sonnet-4-6',
+            'max_tokens': max_tokens,
+            'messages': [{'role': 'user', 'content': p}],
+        }).encode('utf-8')
+        req = urllib.request.Request(
+            'https://api.anthropic.com/v1/messages',
+            data=data,
+            headers={
+                'x-api-key': ANTHROPIC_API_KEY,
+                'anthropic-version': '2023-06-01',
+                'content-type': 'application/json',
+            },
+        )
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return json.loads(r.read())['content'][0]['text']
+
+    try:
+        return _do_call(prompt)
+    except urllib.error.HTTPError as e:
+        if e.code == 400:
+            print(f'Claude 400 — prompt za duzy ({len(prompt)} znakow), przycinam do 80%...')
+            return _do_call(prompt[:int(len(prompt) * 0.8)])
+        raise
 
 
 def select_and_summarize_news(world_items, poland_items, local_items):
@@ -1097,9 +1106,9 @@ def main():
     kety_kety_pl     = fetch_rss_items('https://kety.pl/rss/aktualnosci.xml', max_items=15)
     kety_mamnewsa    = fetch_news_rss('site:mamnewsa.pl', max_items=15)
     kety_24kety      = fetch_rss_items('https://24kety.pl/feed/', max_items=15)
-    gaming_gryonline   = fetch_rss_items('https://www.gry-online.pl/rss/news.xml', max_items=20)
-    gaming_gram        = fetch_rss_items('https://www.gram.pl/rss/content.xml', max_items=20)
-    gaming_ign         = fetch_rss_items('https://pl.ign.com/feed.xml', max_items=20)
+    gaming_gryonline   = fetch_rss_items('https://www.gry-online.pl/rss/news.xml', max_items=25, max_age_days=7)
+    gaming_gram        = fetch_rss_items('https://www.gram.pl/rss/content.xml', max_items=25, max_age_days=7)
+    gaming_ign         = fetch_rss_items('https://pl.ign.com/feed.xml', max_items=25, max_age_days=7)
     epic_free          = fetch_epic_free()
     gog_free_list      = fetch_gog_free()
     watched_news_raw   = fetch_watched_games_news()
