@@ -705,7 +705,7 @@ def fetch_watched_games_news():
     """Pobiera newsy o obserwowanych grach z Google News (3 zapytania)."""
     items = []
     for q in [_GAME_QUERY_1, _GAME_QUERY_2, _GAME_QUERY_3]:
-        items += fetch_news_rss(q, max_items=25, max_age_days=7)
+        items += fetch_news_rss(q, max_items=30, max_age_days=2)
     seen = set()
     unique = []
     for it in items:
@@ -717,24 +717,23 @@ def fetch_watched_games_news():
 
 
 def select_and_summarize_gaming(gaming_items):
-    """Claude wybiera 15 najlepszych newsów gamingowych i pisze streszczenia."""
+    """Claude wybiera wszystkie istotne newsy gamingowe i pisze streszczenia."""
     if not gaming_items:
         return []
-    lines = []
-    for i, it in enumerate(gaming_items):
-        lines.append(f'{i+1}. {it["title"]}')
+    lines = [f'{i+1}. {it["title"]}' for i, it in enumerate(gaming_items)]
 
     prompt = (
         'Jesteś redaktorem serwisu gamingowego. Przejrzyj poniższe artykuły i wybierz '
-        'DOKŁADNIE 15 (lub wszystkie jeśli jest mniej) najciekawszych dla gracza PC.\n'
+        'WSZYSTKIE istotne dla gracza PC — bez limitu liczby.\n'
         'Priorytet: nowe gry/zapowiedzi, DLC, patche, eventy, duże aktualizacje, recenzje.\n'
-        'Pomiń: clickbait, powtórzenia tego samego tematu (zostaw najlepszy), plotki bez źródła.\n\n'
+        'Pomiń TYLKO: oczywisty clickbait i dokładne duplikaty tego samego tematu (zostaw najlepszy).\n'
+        'NIE ograniczaj liczby — pokaż wszystkie wartościowe artykuły.\n\n'
         'Format (zachowaj oryginalny numer + 1 zdanie streszczenie po polsku max 15 słów):\n'
         '3. Zdanie streszczające.\n'
         '7. Zdanie streszczające.\n\n'
         'Artykuły:\n' + '\n'.join(lines)
     )
-    result = call_claude(prompt, max_tokens=2000, timeout=90)
+    result = call_claude(prompt, max_tokens=4000, timeout=120)
 
     selected = []
     for line in result.split('\n'):
@@ -755,10 +754,12 @@ def select_watched_games_updates(items):
     lines = [f'{i+1}. {it["title"]}' for i, it in enumerate(items)]
 
     prompt = (
-        'Filtruj poniższe newsy. Zostaw TYLKO te które dotyczą co najmniej jednej z gier:\n'
+        'Filtruj poniższe newsy. Zostaw WSZYSTKIE które dotyczą co najmniej jednej z gier:\n'
         f'{game_names}\n\n'
-        'Uwzględniaj: patche, DLC, eventy, darmowe przedmioty, zapowiedzi, bety, '
-        'aktualizacje, nowe gry z serii, zamknięcia studiów. Pomiń niezwiązane z tymi grami.\n\n'
+        'Uwzględniaj WSZYSTKO: patche, DLC, eventy, darmowe przedmioty, zapowiedzi, bety, '
+        'aktualizacje, nowe gry z serii, recenzje, newsy ogólne o grze lub studio.\n'
+        'Pomiń TYLKO artykuły które nie dotyczą żadnej z tych gier.\n'
+        'NIE ograniczaj liczby — pokaż wszystkie trafienia.\n\n'
         'Format — artykuły pogrupowane po grach:\n'
         '=== Ogólne ===\n'
         '(tu: wyprzedaże/bundle/rankingi/eventy dotyczące WIELU gier naraz)\n'
@@ -772,7 +773,7 @@ def select_watched_games_updates(items):
         'WAŻNE: każdy artykuł trafia do JEDNEJ sekcji — albo Ogólne, albo konkretna gra.\n\n'
         'Artykuły:\n' + '\n'.join(lines)
     )
-    result = call_claude(prompt, max_tokens=3000, timeout=90)
+    result = call_claude(prompt, max_tokens=6000, timeout=150)
 
     grouped = {}
     current_game = None
@@ -1106,9 +1107,9 @@ def main():
     kety_kety_pl     = fetch_rss_items('https://kety.pl/rss/aktualnosci.xml', max_items=15)
     kety_mamnewsa    = fetch_news_rss('site:mamnewsa.pl', max_items=15)
     kety_24kety      = fetch_rss_items('https://24kety.pl/feed/', max_items=15)
-    gaming_gryonline   = fetch_rss_items('https://www.gry-online.pl/rss/news.xml', max_items=25, max_age_days=7)
-    gaming_gram        = fetch_rss_items('https://www.gram.pl/rss/content.xml', max_items=25, max_age_days=7)
-    gaming_ign         = fetch_rss_items('https://pl.ign.com/feed.xml', max_items=25, max_age_days=7)
+    gaming_gryonline   = fetch_rss_items('https://www.gry-online.pl/rss/news.xml', max_items=30, max_age_days=2)
+    gaming_gram        = fetch_rss_items('https://www.gram.pl/rss/content.xml', max_items=30, max_age_days=2)
+    gaming_ign         = fetch_rss_items('https://pl.ign.com/feed.xml', max_items=30, max_age_days=2)
     epic_free          = fetch_epic_free()
     gog_free_list      = fetch_gog_free()
     watched_news_raw   = fetch_watched_games_news()
